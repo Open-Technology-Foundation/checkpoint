@@ -1,0 +1,360 @@
+#!/usr/bin/env bash
+#shellcheck disable=SC1091,SC2155
+set -euo pipefail
+
+# Set explicit PATH to ensure command availability
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+
+# Set locale to ensure consistent date formatting
+export LC_ALL=C
+
+readonly -- VERSION='1.0.2'
+
+# Get script name portably (works on Linux and macOS/BSD)
+get_script_path() {
+  local script_path
+  
+  # Try various methods in order of preference
+  if command -v readlink >/dev/null 2>&1 && readlink -e -- "$0" >/dev/null 2>&1; then
+    # Linux with GNU readlink
+    script_path=$(readlink -e -- "$0")
+  elif command -v realpath >/dev/null 2>&1; then
+    # Systems with realpath command
+    script_path=$(realpath -- "$0")
+  else
+    # Fallback for all systems
+    script_path="$0"
+    if [[ $script_path != /* ]]; then
+      script_path="$PWD/$script_path"
+    fi
+  fi
+  
+  echo "$script_path"
+}
+
+readonly -- PRG0="$(get_script_path)"
+#shellcheck disable=SC2034
+readonly -- PRGDIR="${PRG0%/*}" PRG="${PRG0##*/}"
+
+declare -- RED='' NOCOLOR=''
+[ -t 2 ] && { RED=$'\033[0;31m'; NOCOLOR=$'\033[0m'; }
+error() { local msg; for msg in "$@"; do >&2 printf '%s: %serror%s: %s\n' "$PRG" "$RED" "$NOCOLOR" "$msg"; done; }
+die() { local -i exitcode=1; if (($#)); then exitcode=$1; shift; fi; if (($#)); then error "$@"; fi; exit "$exitcode"; }
+
+# Check for required commands
+for cmd in rsync find stat; do
+  command -v "$cmd" >/dev/null 2>&1 || die 1 "Required command '$cmd' not found."
+done
+
+# Requires root or sudo
+((EUID)) && { sudo -ln &>/dev/null || die 1 "Requires root, or non-interactive sudo privileges."; sudo -n "$0" "$@"; exit $?; }
+noarg() { if (($# < 2)) || [[ ${2:0:1} == '-' ]]; then die 2 "Missing argument for option '$1'"; fi; true; }
+isodate() { date +'%Y%m%d_%H%M%S'; }
+
+# Handle process termination gracefully
+xcleanup() { local -i exitcode=${1:-0}; exit "$exitcode"; }
+trap 'xcleanup $?' SIGINT SIGTERM EXIT
+
+# Globals
+declare -- source_dir=''
+declare -- backup_dir=''
+declare -- suffix=''
+declare -i verbose=1  # Default to verbose mode
+declare -i list_mode=0  # Flag for list mode
+
+usage() {
+  cat <<EOT
+$PRG $VERSION - create checkpoint backup
+
+Creates Checkpoint Backup. Default backup destination dir:
+
+   /var/backups/$(basename -- "\$PWD")/TIMESTAMP
+
+ - Excludes directories: backup_dir, .gudang/, temp/, .temp/, tmp/
+ - Excludes files: *~ ~*
+
+Requires sudo/root access.
+
+Usage:
+  $PRG [OPTIONS] [directory]
+  $PRG --list [OPTIONS] [directory]
+
+Options:
+  -d, --backup-dir DIR  Backup directory for checkpoints
+                             (default: /var/backups/DIR_NAME)
+  -s, --suffix SUF           Optional suffix to add to checkpoint
+                             dir name (alphanumeric, dots, underscores and hyphens only)
+  -q, --quiet                Quiet mode, minimal output
+  -v, --verbose              Verbose output (default)
+  -l, --list                 List existing checkpoints instead of creating a new one
+  -V, --version              Print version and exit
+                             ($VERSION)
+  -h, --help                 Display this help
+
+Examples:
+  # Create checkpoint backup of current dir in
+  #   /var/backups/$(basename -- "\$PWD")
+  $PRG
+
+  # Create checkpoint backup of ~/myscript dir in
+  #   ~/backups/myproject/
+  $PRG -d ~/backups/myproject  ~/myscript
+
+  # Create checkpoint backup quietly with a suffix
+  $PRG -q -s "before-api-refactor"
+  
+  # List existing checkpoints for the current directory
+  $PRG --list
+EOT
+  exit 0
+}
+
+# Get owner and group, portably across Linux and BSD/macOS
+get_owner_info() {
+  local path="$1"
+  local owner group
+  
+  if stat --version 2>/dev/null | grep -q GNU; then
+    # GNU stat (Linux)
+    owner=$(stat -c "%U" "$path")
+    group=$(stat -c "%G" "$path")
+  else
+    # BSD stat (macOS)
+    owner=$(stat -f "%Su" "$path")
+    group=$(stat -f "%Sg" "$path")
+  fi
+  
+  echo "$owner $group"
+}
+
+# Get canonical (absolute) path portably
+get_canonical_path() {
+  local path="$1"
+  
+  if command -v readlink >/dev/null 2>&1 && readlink -f -- "$path" >/dev/null 2>&1; then
+    readlink -f -- "$path"
+  elif command -v realpath >/dev/null 2>&1; then
+    realpath -- "$path" 2>/dev/null
+  else
+    # Simple fallback if all else fails
+    if [[ $path != /* ]]; then
+      echo "$PWD/$path"
+    else
+      echo "$path"
+    fi
+  fi
+}
+
+# Get relative path portably
+get_relative_path() {
+  local from="$1"
+  local to="$2"
+  
+  if command -v realpath >/dev/null 2>&1; then
+    realpath --relative-to="$from" "$to" 2>/dev/null || echo "$to"
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c "import os.path; print(os.path.relpath('$to', '$from'))" 2>/dev/null || echo "$to"
+  else
+    # Simple fallback if all else fails
+    echo "$to"
+  fi
+}
+
+# Check available disk space
+check_disk_space() {
+  local dir="$1"
+  local src_size required_space available_space
+  
+  # Get source size in KB
+  src_size=$(du -sk "$source_dir" | cut -f1)
+  
+  # Add 10% buffer
+  required_space=$((src_size + (src_size / 10)))
+  
+  # Get available space in KB - works for both GNU/Linux and BSD/macOS
+  available_space=$(df -k "$dir" | awk 'NR==2 {print $4}')
+  
+  if [[ $available_space -lt $required_space ]]; then
+    return 1
+  fi
+  
+  return 0
+}
+
+#=============================================================================
+main() {
+  while (($#)); do case "$1" in
+    -d|--backup-dir)
+                  noarg "$@"; shift
+                  backup_dir="$1"
+                  ;;
+    -s|--suffix)  noarg "$@"; shift 
+                  suffix="$1"
+                  # Sanitize suffix for security
+                  suffix=$(echo "$suffix" | tr -cd '[:alnum:]._-')
+                  [[ -n $suffix ]] && suffix=_"$suffix"
+                  ;;
+    -q|--quiet)   verbose=0 ;;
+    -v|--verbose) verbose=1 ;;
+    -l|--list)    list_mode=1 ;;
+    -V|--version) echo "$PRG $VERSION"; exit 0 ;;
+    -h|--help)    usage ;;
+    -[VhdsqvlS]*) #shellcheck disable=SC2046 #split up single options
+                  set -- '' $(printf -- "-%c " $(grep -o . <<<"${1:1}")) "${@:2}";;
+    -*)           die 22 "Invalid option '$1'" ;;
+    *)            [[ -n $source_dir ]] && die 1 "Source dir '$source_dir' has already been defined!"
+                  source_dir="$1"
+                  ;;
+  esac; shift; done
+
+  # Calculate timestamp at backup time, not script start time
+  declare datestamp=$(isodate)
+
+  [[ -z $source_dir ]] && source_dir="$PWD"
+  # Handle path portably using a single canonical path resolution function
+  source_dir=$(get_canonical_path "$source_dir")
+  [[ -d "$source_dir" ]] || die 1 "No such directory '$source_dir'"
+  
+  # Get the source directory name for backup directory determination
+  src_dir_name=$(basename -- "$source_dir")
+  
+  # Get owner info portably
+  read -r user group < <(get_owner_info "$source_dir")
+
+  [[ -z $backup_dir ]] && backup_dir=/var/backups/"$src_dir_name"
+  # Handle path portably using the same function
+  backup_dir=$(get_canonical_path "$backup_dir")
+  [[ -d "$backup_dir" ]] || {
+    # Only prompt if in verbose mode, otherwise create automatically
+    if ((verbose)); then
+      error "No such directory '$backup_dir'"
+      read -r -p "Create backup dir '$backup_dir'? y/n " yn
+      [[ $yn == 'y' ]] || die 1 ''
+    fi
+    mkdir -p "$backup_dir" || die 1 "Could not create directory '$backup_dir'"
+    chown "$user:$group" "$backup_dir" || error "Failed to set ownership on '$backup_dir'"
+    chmod +t "$backup_dir" || error "Failed to set sticky bit on '$backup_dir'"
+  }
+
+  # If in list mode, list the checkpoints and exit
+  if ((list_mode)); then
+    if [[ -d "$backup_dir" ]]; then
+      echo "Checkpoints for $source_dir in $backup_dir:"
+      echo "----------------------------------------"
+      
+      # Initially empty total size
+      total_size="0K"
+      
+      # Find and list checkpoint directories with their sizes
+      count=0
+      total_entries=0
+      
+      # First find the longest name to determine column width
+      max_length=30  # Default minimum width
+      while read -r checkpoint; do
+        dirname=$(basename "$checkpoint")
+        len=${#dirname}
+        (( len > max_length )) && max_length=$len
+      done < <(find "$backup_dir" -maxdepth 1 -type d -name "20*")
+      
+      # Add padding
+      max_length=$((max_length + 2))
+      
+      # Format and display
+      find "$backup_dir" -maxdepth 1 -type d -name "20*" | sort -r | while read -r checkpoint; do
+        size=$(du -sh "$checkpoint" | cut -f1)
+        dirname=$(basename "$checkpoint")
+        printf "%-${max_length}s %7s\n" "$dirname" "$size"
+        count=$((count + 1))
+      done
+      
+      # Count entries and calculate actual total size
+      total_entries=$(find "$backup_dir" -maxdepth 1 -type d -name "20*" | wc -l)
+      
+      # If no checkpoints found
+      if [[ $total_entries -eq 0 ]]; then
+        echo "No checkpoints found."
+      else
+        # Calculate the true total size of all backups (without parent directory)
+        total_bytes=0
+        while read -r checkpoint_dir; do
+          dir_bytes=$(du -sk "$checkpoint_dir" | cut -f1)
+          total_bytes=$((total_bytes + dir_bytes))
+        done < <(find "$backup_dir" -maxdepth 1 -type d -name "20*")
+        
+        # Convert to human readable
+        if [[ $total_bytes -ge 1048576 ]]; then
+          # Convert to GB
+          total_size="$((total_bytes / 1024 / 1024))G"
+        elif [[ $total_bytes -ge 1024 ]]; then
+          # Convert to MB
+          total_size="$((total_bytes / 1024))M"
+        else
+          # Keep as KB
+          total_size="${total_bytes}K"
+        fi
+        
+        echo "----------------------------------------"
+        echo "Total backups: $total_entries   Total size: $total_size"
+      fi
+    else
+      echo "Backup directory $backup_dir does not exist."
+    fi
+    exit 0
+  fi
+
+  # If not in list mode, proceed with backup
+  # Check disk space
+  if ! check_disk_space "$backup_dir"; then
+    die 1 "Insufficient disk space for backup in '$backup_dir'"
+  fi
+
+  fullbackup_dir="$backup_dir"/"$datestamp""$suffix"
+  
+  # Show progress based on verbose setting
+  ((verbose)) && echo "Creating checkpoint backup $fullbackup_dir"
+  
+  mkdir -p "$fullbackup_dir" || die 1 "Failed to create directory '$fullbackup_dir'"
+  chown "$user:$group" "$fullbackup_dir" || error "Failed to set ownership on '$fullbackup_dir'"
+
+  # Get relative path from source to backup dir for proper exclusion
+  rel_exclude=$(get_relative_path "$source_dir" "$backup_dir")
+  
+  # Add progress indicator based on verbosity and terminal
+  rsync_opts="-al"
+  if ((verbose)) && [ -t 1 ]; then
+    rsync_opts="${rsync_opts}h --progress"
+  fi
+  
+  # Execute rsync with error handling
+  if ! rsync $rsync_opts "$source_dir"/ "$fullbackup_dir"/ \
+      --exclude="$rel_exclude"/ \
+      --exclude=.gudang/ \
+      --exclude=temp/ \
+      --exclude=.temp/ \
+      --exclude=tmp/ \
+      --exclude="~*" \
+      --exclude="*~"; then
+    die 1 "Rsync backup failed"
+  fi
+
+  # Report backup usage with improved error handling - but only if verbose
+  if ((verbose)); then
+    local numbackups=0
+    numbackups=$(find "$backup_dir"/ -maxdepth 1 -type d -name "20[0-9][0-9][0-1][0-9][0-3][0-9]_[0-2][0-9][0-6][0-9][0-5][0-9]*" | wc -l) || numbackups=0
+    
+    # Get disk usage in a portable way
+    local usage=""
+    usage=$(du -sh "$backup_dir"/ 2>/dev/null | awk '{print $1}') || usage="unknown"
+    
+    >&2 echo "$numbackups backups in $backup_dir ($usage)"
+    echo "Backup completed successfully to $fullbackup_dir"
+  else
+    # In quiet mode, just print the backup path
+    echo "$fullbackup_dir"
+  fi
+}
+
+main "$@"
+
+#fin
