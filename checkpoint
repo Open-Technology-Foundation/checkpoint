@@ -61,6 +61,7 @@ declare -- backup_dir=''
 declare -- suffix=''
 declare -i verbose=1  # Default to verbose mode
 declare -i list_mode=0  # Flag for list mode
+declare -i use_hardlinks=1  # Default to use hardlinks for efficiency
 
 usage() {
   cat <<EOT
@@ -81,15 +82,16 @@ Usage:
 
 Options:
   -d, --backup-dir DIR  Backup directory for checkpoints
-                             (default: /var/backups/DIR_NAME)
-  -s, --suffix SUF           Optional suffix to add to checkpoint
-                             dir name (alphanumeric, dots, underscores and hyphens only)
-  -q, --quiet                Quiet mode, minimal output
-  -v, --verbose              Verbose output (default)
-  -l, --list                 List existing checkpoints instead of creating a new one
-  -V, --version              Print version and exit
-                             ($VERSION)
-  -h, --help                 Display this help
+                        (default: /var/backups/DIR_NAME)
+  -s, --suffix SUF      Optional suffix to add to checkpoint
+                        dir name (alnum + '._-' only)
+  -q, --quiet           Quiet mode, minimal output
+  -v, --verbose         Verbose output (default)
+  -l, --list            List existing checkpoints for {directory}
+  -n, --no-hardlinks    Don't use hardlinks to previous backups
+      --hardlinks       Use hardlinks to previous backups (default)
+  -V, --version         Print version and exit ($VERSION)
+  -h, --help            Display this help
 
 Examples:
   # Create checkpoint backup of current dir in
@@ -101,7 +103,7 @@ Examples:
   $PRG -d ~/backups/myproject  ~/myscript
 
   # Create checkpoint backup quietly with a suffix
-  $PRG -q -s "before-api-refactor"
+  $PRG -q -s "before api refactor"
   
   # List existing checkpoints for the current directory
   $PRG --list
@@ -181,6 +183,15 @@ check_disk_space() {
   return 0
 }
 
+# Find the most recent backup directory to use for hardlinks
+find_previous_backup() {
+  local backup_dir="$1"
+
+  # Look for directories with timestamp patterns (20YYMMDD_HHMMSS)
+  # Sort in reverse to get the most recent first
+  find "$backup_dir" -maxdepth 1 -type d -name "20[0-9][0-9][0-1][0-9][0-3][0-9]_[0-2][0-9][0-6][0-9][0-5][0-9]*" | sort -r | head -n 1
+}
+
 #=============================================================================
 main() {
   while (($#)); do case "$1" in
@@ -189,17 +200,20 @@ main() {
                   backup_dir="$1"
                   ;;
     -s|--suffix)  noarg "$@"; shift 
-                  suffix="$1"
-                  # Sanitize suffix for security
+                  suffix="${1// /-}"
+                  # Sanitize suffix
                   suffix=$(echo "$suffix" | tr -cd '[:alnum:]._-')
                   [[ -n $suffix ]] && suffix=_"$suffix"
                   ;;
     -q|--quiet)   verbose=0 ;;
     -v|--verbose) verbose=1 ;;
     -l|--list)    list_mode=1 ;;
+    -n|--no-hardlinks)
+                  use_hardlinks=0 ;;
+    --hardlinks)  use_hardlinks=1 ;;
     -V|--version) echo "$PRG $VERSION"; exit 0 ;;
     -h|--help)    usage ;;
-    -[VhdsqvlS]*) #shellcheck disable=SC2046 #split up single options
+    -[VhdsqvlnS]*) #shellcheck disable=SC2046 #split up single options
                   set -- '' $(printf -- "-%c " $(grep -o . <<<"${1:1}")) "${@:2}";;
     -*)           die 22 "Invalid option '$1'" ;;
     *)            [[ -n $source_dir ]] && die 1 "Source dir '$source_dir' has already been defined!"
@@ -326,8 +340,21 @@ main() {
     rsync_opts="${rsync_opts}h --progress"
   fi
   
+  # Find previous backup to use for hardlinks if enabled
+  if ((use_hardlinks)); then
+    prev_backup=$(find_previous_backup "$backup_dir")
+    if [[ -n "$prev_backup" && "$prev_backup" != "$fullbackup_dir" ]]; then
+      ((verbose)) && echo "Using previous backup for hardlinks: $prev_backup"
+      link_dest_opt="--link-dest=$prev_backup"
+    else
+      link_dest_opt=""
+    fi
+  else
+    link_dest_opt=""
+  fi
+
   # Execute rsync with error handling
-  if ! rsync $rsync_opts "$source_dir"/ "$fullbackup_dir"/ \
+  if ! rsync $rsync_opts $link_dest_opt "$source_dir"/ "$fullbackup_dir"/ \
       --exclude="$rel_exclude"/ \
       --exclude=.gudang/ \
       --exclude=temp/ \
@@ -348,7 +375,11 @@ main() {
     usage=$(du -sh "$backup_dir"/ 2>/dev/null | awk '{print $1}') || usage="unknown"
     
     >&2 echo "$numbackups backups in $backup_dir ($usage)"
-    echo "Backup completed successfully to $fullbackup_dir"
+    if ((use_hardlinks)) && [[ -n "$link_dest_opt" ]]; then
+      echo "Backup completed successfully to $fullbackup_dir (with hardlinks)"
+    else
+      echo "Backup completed successfully to $fullbackup_dir"
+    fi
   else
     # In quiet mode, just print the backup path
     echo "$fullbackup_dir"
