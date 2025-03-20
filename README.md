@@ -41,6 +41,8 @@ checkpoint [OPTIONS] [directory]
 
 - `-d, --backup-dir DIR` : Backup directory for checkpoints (default: /var/backups/DIR_NAME)
 - `-s, --suffix SUF` : Optional suffix to add to checkpoint directory name (alphanumeric, dots, underscores and hyphens only)
+- `-n, --no-hardlink` : Do not hardlink to previous backup
+- `--hardlink` : Hardlink to previous backup (default if `hardlink` installed)
 - `-q, --quiet` : Quiet mode with minimal output
 - `-v, --verbose` : Verbose output (default)
 - `-l, --list` : List existing checkpoints instead of creating a new one
