@@ -1,114 +1,192 @@
 # Checkpoint
 
-A simple, reliable utility for creating codebase snapshots (checkpoints) during development.
+A cross-platform utility for creating, managing, and restoring timestamped snapshots of code and configuration directories.
 
 ## Overview
 
-The `checkpoint` script creates backup snapshots of a directory, storing them in a timestamped directory structure. It's designed for developers who want to quickly save the current state of their codebase before making significant changes. The tool provides a simple way to create, list, and manage code snapshots.
+Checkpoint provides developers and system administrators with a reliable safety net for preserving directory states before making significant changes. It creates organized, timestamped snapshots with powerful comparison, metadata, and restoration capabilities.
 
-## Features
+Key features include selective restoration, detailed change visualization, remote operations via SSH, and flexible backup rotation - all designed to work consistently across Linux and macOS systems.
 
-- Creates timestamped snapshots of directories
-- Lists existing checkpoints with sizes and totals
-- Excludes backup directories to prevent recursive copying
-- Configurable backup destination
-- Optional descriptive suffixes for backups
-- Quiet mode for use in scripts and automation
-- Cross-platform support (Linux and macOS)
-- Uses `rsync` for efficient copying
+### Key Benefits
+
+- **Development Safety**: Create quick recovery points before risky code changes
+- **Timestamped History**: Track development progress with organized snapshots
+- **Visualization**: Compare differences between snapshots to understand changes
+- **Cross-Platform**: Consistent behavior on Linux and macOS/BSD systems
+- **Flexible Recovery**: Restore entire directories or just specific files/patterns
+
+## Core Features
+
+- **Smart Snapshots**: Creates timestamped backups with descriptive labels
+- **Powerful Comparison**: Visualizes differences between snapshots with colored output
+- **Flexible Restoration**: Restores complete directories or specific file patterns
+- **Metadata Management**: Attaches searchable descriptions and tags to checkpoints
+- **Remote Operations**: Creates and restores backups on remote hosts via SSH
+- **Space Optimization**: Uses hardlinking between versions to minimize disk usage
+- **Backup Rotation**: Manages history by count or age for automatic cleanup
+- **Automation Support**: Works in non-interactive environments with timeout handling
 
 ## Installation
 
-Simply clone this repository or download the `checkpoint` script. Make it executable:
-
 ```bash
 chmod +x checkpoint
-```
-
-For system-wide installation:
-
-```bash
 sudo cp checkpoint /usr/local/bin/
 ```
 
-## Usage
+## Basic Usage
 
-```
+```bash
+# Create checkpoint of current directory
 checkpoint [OPTIONS] [directory]
+
+# List available checkpoints
+checkpoint --list [OPTIONS] [directory]
+
+# Restore from checkpoint
+checkpoint --restore [RESTORE_OPTIONS] [directory]
 ```
 
-### Options
+## Common Examples
 
-- `-d, --backup-dir DIR` : Backup directory for checkpoints (default: /var/backups/DIR_NAME)
-- `-s, --suffix SUF` : Optional suffix to add to checkpoint directory name (alphanumeric, dots, underscores and hyphens only)
-- `-n, --no-hardlink` : Do not hardlink to previous backup
-- `--hardlink` : Hardlink to previous backup (default if `hardlink` installed)
-- `-q, --quiet` : Quiet mode with minimal output
-- `-v, --verbose` : Verbose output (default)
-- `-l, --list` : List existing checkpoints instead of creating a new one
-- `-V, --version` : Print version and exit
-- `-h, --help` : Display help information
+### Creating Checkpoints
 
-### Examples
-
-Create checkpoint backup of current directory:
 ```bash
+# Basic checkpoint of current directory
 checkpoint
+
+# Checkpoint with descriptive label
+checkpoint -s "before-refactor"
+
+# Checkpoint to custom location
+checkpoint -d ~/backups/myproject
+
+# Checkpoint with searchable metadata
+checkpoint --desc "Pre-release version" --tag "version=1.0.0" --tag "status=testing"
+
+# Checkpoint with backup rotation (keep only 5 most recent)
+checkpoint --keep 5
+
+# Remote checkpoint via SSH
+checkpoint --remote user@host:/path/to/backups
 ```
 
-Create checkpoint backup of a specific directory with custom destination:
-```bash
-checkpoint -d ~/backups/myproject ~/myscript
-```
+### Comparing and Restoring
 
-Create checkpoint with a descriptive suffix:
 ```bash
-checkpoint -s "before-api-refactor"
-```
-
-Create checkpoint in quiet mode:
-```bash
-checkpoint -q
-```
-
-List existing checkpoints for the current directory:
-```bash
+# List all available checkpoints
 checkpoint --list
+
+# Restore latest checkpoint
+checkpoint --restore
+
+# Restore specific checkpoint by ID
+checkpoint --restore --from 20250430_091429
+
+# Preview differences before restoring
+checkpoint --restore --diff
+
+# Restore to different directory
+checkpoint --restore --from 20250430_091429 --to ~/restored-project
+
+# Restore only specific files
+checkpoint --restore --files "*.js" --files "docs/*.md"
+
+# Compare two checkpoints with detailed diff
+checkpoint --from 20250430_091429 --compare-with 20250430_101530 --detailed
+
+# Restore from remote checkpoint
+checkpoint --remote user@host:/path/to/backups --restore --from 20250430_091429
 ```
 
-## Backup Format
+## Command Reference
 
-Backups are stored in the following format:
+### Core Options
+
+- `-d, --backup-dir DIR` : Set custom backup location (default: /var/backups/DIR_NAME)
+- `-s, --suffix SUF` : Add descriptive suffix to checkpoint name
+- `-q, --quiet` : Minimal output (just backup path)
+- `-v, --verbose` : Detailed output with progress (default)
+- `-l, --list` : List existing checkpoints with sizes
+
+### Backup Management
+
+- `--keep N` : Keep only N most recent backups (rotation by count)
+- `--age DAYS` : Remove backups older than DAYS days (rotation by age)
+- `--exclude PATTERN` : Specify additional exclusion pattern (can use multiple times)
+- `--verify` : Verify backup integrity after creation
+- `--no-sudo` : Never attempt privilege escalation
+- `--hardlink` : Enable hardlinking for space efficiency (default if available)
+- `--prune-only` : Remove old backups without creating new one
+
+### Metadata Options
+
+- `--desc TEXT` : Add description to checkpoint
+- `--tag KEY=VALUE` : Add searchable metadata tag (can use multiple times)
+- `--metadata` : Access checkpoint metadata
+- `--show ID` : Display metadata for specific checkpoint
+- `--update ID` : Update metadata for existing checkpoint
+- `--find PATTERN` : Search for checkpoints by metadata
+
+### Remote Operations
+
+- `--remote SPEC` : Remote location in format user@host:/path
+- `--timeout SECONDS` : SSH connection timeout (default: 30s)
+
+### Restore and Compare Options
+
+- `--restore` : Restore from checkpoint
+- `--from ID` : Specify source checkpoint (defaults to most recent)
+- `--to DIR` : Set target restore directory (defaults to original location)
+- `--dry-run` : Preview changes without making them
+- `--diff` : Show differences before restoring
+- `--compare-with ID` : Compare two checkpoints
+- `--detailed` : Show file content differences in comparison
+- `--files PATTERN` : Select specific files/patterns (can use multiple times)
+
+## Automation Features
+
+Checkpoint is designed to work reliably in automated environments with several safeguards:
+
+### Environment Variables
+
+- `CHECKPOINT_AUTO_CONFIRM=1` : Automatically answer "yes" to all interactive prompts
+
+### Timeout Protection
+
+All interactive prompts have built-in timeouts to prevent script hanging:
+- Restore confirmation: 30-second timeout
+- Directory creation: 30-second timeout
+- Checkpoint ID selection: 60-second timeout
+
+### Non-Interactive Usage Tips
+
+```bash
+# Create automatic backup with timestamp in filename
+CHECKPOINT_AUTO_CONFIRM=1 checkpoint -s "auto-$(date +%Y%m%d)"
+
+# Automated restore with explicit parameters
+CHECKPOINT_AUTO_CONFIRM=1 checkpoint --restore --from 20250430_091429 --to /path/to/restore
+
+# Regular pruning as part of maintenance scripts
+checkpoint --prune-only --keep 10
 ```
-<destination>/<timestamp>[_<suffix>]/
-```
 
-Example:
-```
-/var/backups/project_name/20250310_143022_before-api-refactor/
-```
+## Default Exclusions
 
-## Requirements
+These patterns are automatically excluded from backups:
+- Backup directory itself (prevents recursion)
+- `.gudang/`, `temp/`, `.temp/`, `tmp/` directories
+- Temporary files: `*~` and `~*`
 
-- Requires root or sudo access to maintain proper file ownership
-- Uses `rsync`, `find`, and `stat` commands (included in most Linux/Unix systems)
-- Excludes directories: backup_dir, .gudang/, temp/, .temp/, tmp/
-- Excludes files: *~ and ~*
+## System Requirements
 
-## Sample List Output
-
-Listing checkpoints with `checkpoint --list`:
-
-```
-Checkpoints for /path/to/source in /var/backups/source_dir:
-----------------------------------------
-20250313_170443_refactor            6.0K
-20250313_170035                      30K
-20250313_170019                      30K
-20250313_164701                      30K
-----------------------------------------
-Total backups: 4   Total size: 96K
-```
+- **Core Dependencies**: `rsync`, `find`, and `stat` commands
+- **Optional Dependencies**:
+  - `hardlink`: For space-efficient backups
+  - `delta` or `colordiff`: For enhanced diff visualization
+- **Permissions**: Root/sudo access for restricted directories (optional with `--no-sudo`)
+- **Remote Operations**: SSH access (only needed for remote features)
 
 ## License
 

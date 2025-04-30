@@ -1,0 +1,11 @@
+# Checkpoint metadata
+# Created: 2025-04-30 11:22:55
+VERSION=1.3.0
+CREATED=2025-04-30 11:22:55
+HOST=okusi
+USER=sysadmin
+DESCRIPTION=Production backup
+SYSTEM=prod-server
+project=checkpoint
+version=2.0.0
+environment=production
