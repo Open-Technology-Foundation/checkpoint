@@ -186,7 +186,7 @@ Options:
       --timeout SECONDS SSH connection timeout (default: 30 seconds)
       --keep NUM        Keep only specified number of most recent backups
       --age DAYS        Keep only backups newer than specified days
-      --prune-only      Only prune backups without creating a new one
+  -p, --prune-only      Only prune backups without creating a new one
   -V, --version         Print version and exit ($VERSION)
   -h, --help            Display this help
 
@@ -1407,11 +1407,13 @@ main() {
                   ;;
        --dry-run) dry_run=1 ;;
        --diff)    diff_mode=1 ;;
-       --compare-with) noarg "$@"; shift
+       --compare-with)
+                  noarg "$@"; shift
                   compare_source="$1"
                   compare_mode=1
                   ;;
-       --detailed)  compare_detailed=1 ;;
+       --detailed)
+                  compare_detailed=1 ;;
        --files)   noarg "$@"; shift
                   restore_files+=("$1")
                   ;;
@@ -1421,7 +1423,8 @@ main() {
        --debug)   debug=1 ;;
        --verify)  verify_mode=1 ;;
        --no-sudo) no_sudo=1 ;;
-       --metadata) metadata_mode=1 ;;
+       --metadata)
+                  metadata_mode=1 ;;
        --show)    noarg "$@"; shift
                   metadata_action="show"
                   metadata_checkpoint="$1"
@@ -1472,7 +1475,8 @@ main() {
                   fi
                   age_days="$1"
                   ;;
-       --prune-only) prune_only=1 ;;
+    -p|--prune-only)
+                  prune_only=1 ;;
     -V|--version) echo "$PRG $VERSION"; exit 0 ;;
     -h|--help)    usage ;;
     -[dsnqvlrfthV]*) #shellcheck disable=SC2046 #split up single options
@@ -1490,10 +1494,10 @@ main() {
   # Handle path portably using a single canonical path resolution function
   source_dir=$(get_canonical_path "$source_dir")
   [[ -d "$source_dir" ]] || die 1 "No such directory '$source_dir'"
-  
+
   # Get the source directory name for backup directory determination
   src_dir_name=$(basename -- "$source_dir")
-  
+
   # Get owner info portably
   read -r user group < <(get_owner_info "$source_dir")
 
@@ -1507,7 +1511,7 @@ main() {
   fi
 
   # Create backup directory if it doesn't exist
-  [[ -d "$backup_dir" ]] || {
+  if [[ ! -d "$backup_dir" ]]; then
     # Only prompt if in verbose mode, otherwise create automatically
     if ((verbose)); then
       error "No such directory '$backup_dir'"
@@ -1536,7 +1540,7 @@ main() {
     mkdir -p "$backup_dir" || die 1 "Could not create directory '$backup_dir'"
     chown "$user:$group" "$backup_dir" || error "Failed to set ownership on '$backup_dir'"
     chmod +t "$backup_dir" || error "Failed to set sticky bit on '$backup_dir'"
-  }
+  fi
 
   # Handle compare mode
   if ((compare_mode)); then
@@ -1649,36 +1653,36 @@ main() {
     if [[ -d "$backup_dir" ]]; then
       echo "Checkpoints for $source_dir in $backup_dir:"
       echo "----------------------------------------"
-      
+
       # Initially empty total size
       total_size="0K"
-      
+
       # Find and list checkpoint directories with their sizes
       count=0
       total_entries=0
-      
+
       # First find the longest name to determine column width
       max_length=30  # Default minimum width
       while read -r checkpoint; do
         dirname=$(basename "$checkpoint")
         len=${#dirname}
         (( len > max_length )) && max_length=$len
-      done < <(find "$backup_dir" -maxdepth 1 -type d -name "20*")
-      
+      done < <(find "$backup_dir" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN")
+
       # Add padding
       max_length=$((max_length + 2))
-      
+
       # Format and display
-      find "$backup_dir" -maxdepth 1 -type d -name "20*" | sort -r | while read -r checkpoint; do
+      find "$backup_dir" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN" | sort -r | while read -r checkpoint; do
         size=$(du -sh "$checkpoint" | cut -f1)
         dirname=$(basename "$checkpoint")
         printf "%-${max_length}s %7s\n" "$dirname" "$size"
         count=$((count + 1))
       done
-      
+
       # Count entries and calculate actual total size
-      total_entries=$(find "$backup_dir" -maxdepth 1 -type d -name "20*" | wc -l)
-      
+      total_entries=$(find "$backup_dir" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN" | wc -l)
+
       # If no checkpoints found
       if [[ $total_entries -eq 0 ]]; then
         echo "No checkpoints found."
@@ -1688,8 +1692,8 @@ main() {
         while read -r checkpoint_dir; do
           dir_bytes=$(du -sk "$checkpoint_dir" | cut -f1)
           total_bytes=$((total_bytes + dir_bytes))
-        done < <(find "$backup_dir" -maxdepth 1 -type d -name "20*")
-        
+        done < <(find "$backup_dir" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN")
+
         # Convert to human readable
         if [[ $total_bytes -ge 1048576 ]]; then
           # Convert to GB
@@ -1701,7 +1705,7 @@ main() {
           # Keep as KB
           total_size="${total_bytes}K"
         fi
-        
+
         echo "----------------------------------------"
         echo "Total backups: $total_entries   Total size: $total_size"
       fi
@@ -1727,16 +1731,16 @@ main() {
   ((hardlink)) && lastbackup=$(find "$backup_dir" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN" | sort | tail -n1)
 
   fullbackup_dir="$backup_dir"/"$datestamp""$suffix"
-  
+
   # Show progress based on verbose setting
   ((verbose)) && echo "Creating checkpoint backup $fullbackup_dir"
-  
+
   mkdir -p "$fullbackup_dir" || die 1 "Failed to create directory '$fullbackup_dir'"
   chown "$user:$group" "$fullbackup_dir" || error "Failed to set ownership on '$fullbackup_dir'"
 
   # Get relative path from source to backup dir for proper exclusion
   rel_exclude=$(get_relative_path "$source_dir" "$backup_dir")
-  
+
   # Add progress indicator based on verbosity and terminal
   # Define rsync options as an array - ensure symlinks are preserved
   local -a rsync_opts=("-a" "-l")  # -a = archive mode, -l = preserve symlinks as symlinks
@@ -1758,7 +1762,7 @@ main() {
       echo "  --exclude=$pattern (user-defined)"
     done
   fi
-  
+
   # Build the rsync command with all exclusion patterns
   local -a exclusions=(
     "--exclude=$rel_exclude/"
@@ -1810,11 +1814,11 @@ main() {
   if ((verbose)); then
     local numbackups=0
     numbackups=$(find "$backup_dir"/ -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN" | wc -l) || numbackups=0
-    
+
     # Get disk usage in a portable way
     local usage=""
     usage=$(du -sh "$backup_dir"/ 2>/dev/null | awk '{print $1}') || usage="unknown"
-    
+
     >&2 echo "$numbackups backups in $backup_dir ($usage)"
     echo "Backup completed successfully to $fullbackup_dir"
   else
@@ -1922,6 +1926,7 @@ remote_create_backup() {
 
   # Build exclude arguments
   exclude_args+=(
+    --exclude=".checkpoint"
     --exclude=".gudang/"
     --exclude="temp/"
     --exclude=".temp/"
@@ -1986,7 +1991,7 @@ remote_list_backups() {
   # List directories matching timestamp pattern using improved command structure
   # The -- separator clearly marks the end of SSH options and start of the command
   if ! ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- \
-       "ls -ld ${remote_path}/20* 2>/dev/null || echo 'No matching directories'" > "$tmp_file"; then
+       "ls -ld ${remote_path}/$TIMESTAMP_PATTERN 2>/dev/null || echo 'No matching directories'" > "$tmp_file"; then
     rm -f "$tmp_file"
     # If command fails but ssh succeeded, probably no backups
     echo "No backups found on ${remote_user}@${remote_host}:${remote_path}"
