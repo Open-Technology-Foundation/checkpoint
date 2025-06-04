@@ -44,8 +44,8 @@ readonly -- PRGDIR="${PRG0%/*}" PRG="${PRG0##*/}"
 
 # Terminal colors (only when output is a terminal)
 declare -- RED='' GREEN='' YELLOW='' CYAN='' BOLD='' NOCOLOR=''
-if [ -t 1 ]; then
-  RED=$'\033[0;31m''\033[0;31m'
+if [[ -t 1 ]]; then
+  RED=$'\033[0;31m'
   GREEN=$'\033[0;32m'
   YELLOW=$'\033[0;33m'
   CYAN=$'\033[0;36m'
@@ -54,12 +54,16 @@ if [ -t 1 ]; then
 fi
 
 # Error handling functions
-# error: Print formatted error messages to stderr
+# error: Print formatted error messages to stderr with color coding
+# Outputs errors in consistent format with optional color highlighting
 # Args: One or more error messages
+# Returns: Nothing (outputs to stderr)
 error() { local msg; for msg in "$@"; do >&2 printf '%s: %serror%s: %s\n' "$PRG" "$RED" "$NOCOLOR" "$msg"; done; }
 
 # die: Print error message and exit with specified code
+# Combines error output with script termination for fatal conditions
 # Args: [exitcode] [error_message...]
+# Returns: Never returns (exits with specified code)
 die() { local -i exitcode=1; if (($#)); then exitcode=$1; shift; fi; if (($#)); then error "$@"; fi; exit "$exitcode"; }
 
 # Verify required dependencies
@@ -75,68 +79,77 @@ if ! grep -q "\\-\\-no-sudo" <<< "$*" && ((EUID)); then
 fi
 
 # noarg: Verify command option has required argument
+# Validates that command-line options have proper arguments and prevents
+# options from being treated as arguments to other options
 # Args: $1 - option name, $2+ - remaining args
 # Returns: true if valid, dies with error if missing argument
+# Example: noarg "--backup-dir" "$@"
 noarg() { if (($# < 2)) || [[ ${2:0:1} == '-' ]]; then die 2 "Missing argument for option '$1'"; fi; true; }
 
 # isodate: Generate timestamp in YYYYMMDD_HHMMSS format for checkpoint names
-# Returns: Current time in YYYYMMDD_HHMMSS format
+# Creates consistent timestamp format used throughout the application for
+# checkpoint directory naming and ensuring sortable backup ordering
+# Returns: Current time in YYYYMMDD_HHMMSS format (e.g., "20250430_143052")
 isodate() { date +'%Y%m%d_%H%M%S'; }
 
 # xcleanup: Clean up on script exit
+# Exit handler function registered with trap to ensure clean script termination
 # Args: $1 - exit code to use (default: 0)
+# Returns: Never returns (exits with specified code)
 xcleanup() { local -i exitcode=${1:-0}; exit "$exitcode"; }
 trap 'xcleanup $?' SIGINT SIGTERM EXIT
 
 # GLOBAL CONFIGURATION VARIABLES
+# These variables control all aspects of checkpoint operation and are set
+# through command-line argument parsing or environment detection
 
-# Core settings
-declare -- source_dir=''    # Directory to back up
-declare -- backup_dir=''    # Where checkpoints are stored
-declare -- suffix=''        # Optional suffix for checkpoint names
-declare -i verbose=1        # Default to verbose mode
-declare -i debug=0          # Enable debug information
-declare -i list_mode=0      # List checkpoints instead of creating
-declare -i hardlink=$( [[ -n $HARDLINK ]] && echo 1 || echo 0 ) # Use hardlinking when available
-declare -a exclude_patterns=() # User-defined exclusion patterns
+# Core operational settings
+declare -- source_dir=''    # Directory to back up (defaults to PWD)
+declare -- backup_dir=''    # Where checkpoints are stored (defaults to /var/backups/DIR_NAME)
+declare -- suffix=''        # Optional suffix for checkpoint names (sanitized alphanumeric)
+declare -i verbose=1        # Output verbosity level (0=quiet, 1=verbose)
+declare -i debug=0          # Enable debug information output
+declare -i list_mode=0      # List checkpoints instead of creating new ones
+declare -i hardlink=$( [[ -n $HARDLINK ]] && echo 1 || echo 0 ) # Use hardlinking when available for space efficiency
+declare -a exclude_patterns=() # User-defined exclusion patterns beyond defaults
 
 # Remote operation settings
-declare -i remote_mode=0    # Enable remote operations
-declare -- remote_spec=''   # Full remote specification (user@host:/path)
-declare -- remote_user=''   # Parsed remote username
-declare -- remote_host=''   # Parsed remote hostname
-declare -- remote_path=''   # Parsed remote path
+declare -i remote_mode=0    # Enable remote operations via SSH
+declare -- remote_spec=''   # Full remote specification (user@host:/path format)
+declare -- remote_user=''   # Parsed remote username from remote_spec
+declare -- remote_host=''   # Parsed remote hostname from remote_spec
+declare -- remote_path=''   # Parsed remote path from remote_spec
 declare -i remote_timeout=30 # SSH connection timeout in seconds
 
 # Backup rotation settings
-declare -i keep_count=0     # Number of backups to keep (0 = keep all)
-declare -i age_days=0       # Maximum age in days (0 = keep all)
-declare -i prune_only=0     # Prune without creating new backup
+declare -i keep_count=0     # Number of recent backups to keep (0 = keep all)
+declare -i age_days=0       # Maximum age in days for backups (0 = keep all)
+declare -i prune_only=0     # Only prune old backups without creating new backup
 
-# Restore settings
-declare -i restore_mode=0   # Enable restore mode
-declare -- restore_source='' # Source checkpoint ID to restore from
-declare -- restore_target='' # Target directory to restore to
-declare -i dry_run=0        # Preview changes without making them
-declare -i diff_mode=0      # Show differences before restoring
-declare -a restore_files=() # File patterns to selectively restore
+# Restore operation settings
+declare -i restore_mode=0   # Enable restore mode instead of backup creation
+declare -- restore_source='' # Source checkpoint ID to restore from (timestamp or partial match)
+declare -- restore_target='' # Target directory to restore to (defaults to original location)
+declare -i dry_run=0        # Preview restoration changes without making them
+declare -i diff_mode=0      # Show differences between current files and checkpoint
+declare -a restore_files=() # File patterns for selective restoration
 
-# Comparison settings
-declare -i compare_mode=0   # Enable checkpoint comparison
-declare -- compare_source='' # Second checkpoint to compare with
-declare -i compare_detailed=0 # Show detailed file differences
+# Comparison operation settings
+declare -i compare_mode=0   # Enable checkpoint-to-checkpoint comparison mode
+declare -- compare_source='' # Second checkpoint ID to compare with first
+declare -i compare_detailed=0 # Show detailed file content differences in comparison
 
-# Additional settings
-declare -i verify_mode=0    # Verify backup integrity after creation
-declare -i no_sudo=0        # Never use sudo for operations
+# Additional operational settings
+declare -i verify_mode=0    # Verify backup integrity after creation using checksums
+declare -i no_sudo=0        # Never attempt sudo privilege escalation
 
-# Metadata settings
-declare -i metadata_mode=0  # Enable metadata operations
-declare -- metadata_action='' # Action: show, update, or find
+# Metadata management settings
+declare -i metadata_mode=0  # Enable metadata operations (show, update, find)
+declare -- metadata_action='' # Metadata action type: show, update, or find
 declare -- metadata_checkpoint='' # Checkpoint ID for metadata operation
-declare -- description=''   # Checkpoint description text
-declare -- system_name=''   # Source system identifier
-declare -a tags=()          # Key-value metadata tags
+declare -- description=''   # Human-readable checkpoint description text
+declare -- system_name=''   # Source system identifier for checkpoint metadata
+declare -a tags=()          # Array of key-value metadata tags (KEY=VALUE format)
 
 # Display help and usage information
 usage() {
@@ -145,7 +158,7 @@ $PRG $VERSION - create and restore checkpoint backups
 
 Creates timestamped backup snapshots of a directory. Default destination:
 
-   /var/backups/$(basename -- "\$PWD")/TIMESTAMP[_SUFFIX]
+   /var/backups/DIR_NAME/TIMESTAMP[_SUFFIX]
 
  - Excludes directories: backup_dir, .gudang/, temp/, .temp/, tmp/
  - Excludes files: *~ ~*
@@ -987,7 +1000,7 @@ restore_backup() {
       echo "Warning: Target directory '$target_dir' is not empty."
 
       # Check if we're in a non-interactive environment or if CHECKPOINT_AUTO_CONFIRM is set
-      if [[ ! -t 0 || -n "$CHECKPOINT_AUTO_CONFIRM" ]]; then
+      if [[ ! -t 0 || -n "${CHECKPOINT_AUTO_CONFIRM:-}" ]]; then
         ((verbose)) && echo "Auto-confirming due to non-interactive mode or CHECKPOINT_AUTO_CONFIRM environment variable"
       else
         # Interactive prompt with timeout
@@ -1318,7 +1331,7 @@ prune_backups() {
         if [[ -d "${old_backups[$i]}" ]]; then
           ((verbose)) && echo "Removing backup: $(basename "${old_backups[$i]}")"
           rm -rf "${old_backups[$i]}" || { error "Failed to remove backup '${old_backups[$i]}'"; return 1; }
-          ((pruned_count++))
+          pruned_count=$((pruned_count + 1))
         fi
       done
     else
@@ -1365,7 +1378,7 @@ prune_backups() {
       if ((backup_timestamp < cutoff_time)); then
         ((verbose)) && echo "Removing old backup: $backup_name (older than $age_days days)"
         rm -rf "$backup" || { error "Failed to remove backup '$backup'"; return 1; }
-        ((pruned_count++))
+        pruned_count=$((pruned_count + 1))
       fi
     done < <(find "$backup_dir" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN")
   fi
@@ -1517,7 +1530,7 @@ main() {
       error "No such directory '$backup_dir'"
 
       # Check if we're in a non-interactive environment or if CHECKPOINT_AUTO_CONFIRM is set
-      if [[ ! -t 0 || -n "$CHECKPOINT_AUTO_CONFIRM" ]]; then
+      if [[ ! -t 0 || -n "${CHECKPOINT_AUTO_CONFIRM:-}" ]]; then
         ((verbose)) && echo "Auto-creating directory in non-interactive mode or due to CHECKPOINT_AUTO_CONFIRM environment variable"
         yn="y"
       else
@@ -1722,15 +1735,17 @@ main() {
     exit $?
   fi
 
+
   # Check disk space
   if ! check_disk_space "$backup_dir"; then
     die 1 "Insufficient disk space for backup in '$backup_dir'"
   fi
 
+  fullbackup_dir="$backup_dir"/"$datestamp""$suffix"
+
+  # Determine the most recent backup for hardlinking (after pruning)
   local -- lastbackup
   ((hardlink)) && lastbackup=$(find "$backup_dir" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN" | sort | tail -n1)
-
-  fullbackup_dir="$backup_dir"/"$datestamp""$suffix"
 
   # Show progress based on verbose setting
   ((verbose)) && echo "Creating checkpoint backup $fullbackup_dir"
