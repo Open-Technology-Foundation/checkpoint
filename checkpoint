@@ -183,7 +183,7 @@ Options:
   -q, --quiet           Quiet mode, minimal output
   -v, --verbose         Verbose output (default)
   -l, --list            List existing checkpoints instead of creating new one
-      --exclude PATTERN Exclude files/directories matching pattern (can be used multiple times)
+  -x, --exclude PATTERN Exclude files/directories matching pattern (can be used multiple times)
       --no-sudo         Do not attempt to use sudo for privilege escalation
       --debug           Show debug information during operation
       --verify          Verify backup integrity after creation
@@ -1430,7 +1430,7 @@ main() {
        --files)   noarg "$@"; shift
                   restore_files+=("$1")
                   ;;
-       --exclude) noarg "$@"; shift
+    -x|--exclude) noarg "$@"; shift
                   exclude_patterns+=("$1")
                   ;;
        --debug)   debug=1 ;;
@@ -1476,7 +1476,7 @@ main() {
                   fi
                   remote_timeout="$1"
                   ;;
-       --keep)    noarg "$@"; shift
+    -k|--keep)    noarg "$@"; shift
                   if ! [[ "$1" =~ ^[0-9]+$ ]]; then
                     die 22 "Invalid number for --keep option: '$1'"
                   fi
@@ -1492,7 +1492,7 @@ main() {
                   prune_only=1 ;;
     -V|--version) echo "$PRG $VERSION"; exit 0 ;;
     -h|--help)    usage ;;
-    -[dsnqvlrfthV]*) #shellcheck disable=SC2046 #split up single options
+    -[dsnqvlrftxkphV]*) #shellcheck disable=SC2046 #split up single options
                   set -- '' $(printf -- "-%c " $(grep -o . <<<"${1:1}")) "${@:2}";;
     -*)           die 22 "Invalid option '$1'" ;;
     *)            [[ -n $source_dir ]] && die 1 "Source dir '$source_dir' has already been defined!"
