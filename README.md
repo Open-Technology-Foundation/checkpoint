@@ -286,6 +286,21 @@ checkpoint -s "v1.0"
 checkpoint -s "v1.1"  # Might only use 5MB additional space
 ```
 
+### Atomic Operations
+
+Checkpoint uses atomic operations to ensure backup integrity:
+
+- **Temporary Directory**: Backups are created in a `.tmp.*` directory first
+- **Atomic Rename**: Only after all operations succeed is the backup renamed to its final name
+- **Automatic Cleanup**: Temporary directories are removed on interruption or failure
+- **No Partial States**: You'll never see incomplete or corrupted backups
+
+This means:
+- Interrupted backups leave no trace
+- Concurrent operations are safe (with locking enabled)
+- Backup directories appear instantaneously when complete
+- Failed operations are automatically cleaned up
+
 ### Performance Characteristics
 
 - **Backup Speed**: Limited by rsync performance and storage I/O
@@ -312,6 +327,9 @@ bats tests/test_remote.bats
 
 # Test locking mechanism
 bats tests/test_locking.bats
+
+# Test atomic operations
+bats tests/test_atomic.bats
 
 # Verbose testing
 bats -v tests/test_checkpoint.bats

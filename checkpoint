@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #shellcheck disable=SC1091,SC2155
 # Checkpoint - Utility for creating and restoring code directory snapshots
-# Version: 1.4.0
+# Version: 1.5.0
 set -euo pipefail
 
 # Ensure consistent environment
@@ -9,7 +9,7 @@ export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 export LC_ALL=C
 
 # Core configuration
-readonly -- VERSION='1.4.0'
+readonly -- VERSION='1.5.0'
 readonly -- TIMESTAMP_PATTERN='20[0-9][0-9][0-1][0-9][0-3][0-9]_[0-2][0-9][0-5][0-9][0-5][0-9]*'
 declare -- HARDLINK=$(command -v hardlink || echo '')
 
@@ -94,16 +94,21 @@ isodate() { date +'%Y%m%d_%H%M%S'; }
 
 # xcleanup: Clean up on script exit
 # Exit handler function registered with trap to ensure clean script termination
-# Also releases any locks that may be held
+# Also releases any locks that may be held and removes temporary directories
 # Args: $1 - exit code to use (default: 0)
 # Returns: Never returns (exits with specified code)
-# Globals: lock_dir, use_locking
+# Globals: lock_dir, use_locking, temp_backup_dir
 xcleanup() { 
   local -i exitcode=${1:-0}
   
   # Release lock if we're holding one
   if ((use_locking)) && [[ -n "$lock_dir" ]]; then
     release_lock >/dev/null 2>&1 || true
+  fi
+  
+  # Clean up temporary backup directory if it exists
+  if [[ -n "$temp_backup_dir" ]] && [[ -d "$temp_backup_dir" ]]; then
+    rm -rf "$temp_backup_dir" 2>/dev/null || true
   fi
   
   exit "$exitcode"
@@ -167,6 +172,9 @@ declare -i use_locking=1    # Enable lockfile mechanism for concurrency protecti
 declare -i lock_timeout=300 # Timeout in seconds for acquiring lock (default: 5 minutes)
 declare -i force_unlock=0   # Force removal of stale locks
 declare -- lock_dir=''      # Path to current lock directory (set by acquire_lock)
+
+# Atomic operation settings
+declare -- temp_backup_dir='' # Temporary directory for atomic backup operations
 
 # Display help and usage information
 usage() {
@@ -1921,6 +1929,12 @@ main() {
   fi
 
   fullbackup_dir="$backup_dir"/"$datestamp""$suffix"
+  
+  # Create temporary directory for atomic backup operation
+  # Use .tmp prefix to clearly mark as temporary and exclude from listings
+  temp_backup_dir="$backup_dir/.tmp.$datestamp$$"
+  
+  ((debug)) && echo "DEBUG: Creating temporary backup in $temp_backup_dir"
 
   # Determine the most recent backup for hardlinking (after pruning)
   local -- lastbackup
@@ -1929,8 +1943,13 @@ main() {
   # Show progress based on verbose setting
   ((verbose)) && echo "Creating checkpoint backup $fullbackup_dir"
 
-  mkdir -p "$fullbackup_dir" || die 1 "Failed to create directory '$fullbackup_dir'"
-  chown "$user:$group" "$fullbackup_dir" || error "Failed to set ownership on '$fullbackup_dir'"
+  # Create temporary directory first
+  if ! mkdir -p "$temp_backup_dir"; then
+    die 1 "Failed to create temporary directory '$temp_backup_dir'"
+  fi
+  
+  # Set ownership on temp directory
+  chown "$user:$group" "$temp_backup_dir" || error "Failed to set ownership on '$temp_backup_dir'"
 
   # Get relative path from source to backup dir for proper exclusion
   rel_exclude=$(get_relative_path "$source_dir" "$backup_dir")
@@ -1973,31 +1992,47 @@ main() {
     exclusions+=("--exclude=$pattern")
   done
 
-  # Execute rsync with error handling
-  if ! rsync "${rsync_opts[@]}" "$source_dir"/ "$fullbackup_dir"/ "${exclusions[@]}"; then
+  # Execute rsync to temporary directory with error handling
+  if ! rsync "${rsync_opts[@]}" "$source_dir"/ "$temp_backup_dir"/ "${exclusions[@]}"; then
+    rm -rf "$temp_backup_dir"
     die 1 "Rsync backup failed"
   fi
 
-  # hardlink
+  # hardlink - perform on temporary directory
   if ((hardlink)) && [[ -n $lastbackup ]]; then
     if [[ -n "$HARDLINK" ]]; then
-      ((verbose)) && echo "Hardlinking $lastbackup <-> $fullbackup_dir"
+      ((verbose)) && echo "Hardlinking $lastbackup <-> $temp_backup_dir"
       "$HARDLINK" --respect-name --ignore-mode --ignore-owner --ignore-time --minimum-size 1K --quiet \
-          "$lastbackup"/ "$fullbackup_dir"/
+          "$lastbackup"/ "$temp_backup_dir"/
     fi
   fi
 
   # Create metadata if description, system name, or tags are provided
   if [[ -n "$description" || -n "$system_name" || ${#tags[@]} -gt 0 ]]; then
-    create_metadata "$fullbackup_dir"
+    create_metadata "$temp_backup_dir"
     ((verbose)) && echo "Metadata created for checkpoint"
   fi
 
-  # Verify backup integrity if requested
+  # Verify backup integrity if requested (verify temp dir before making it permanent)
   if ((verify_mode)); then
     ((verbose)) && echo "Verifying backup integrity..."
-    verify_backup "$source_dir" "$fullbackup_dir"
+    if ! verify_backup "$source_dir" "$temp_backup_dir"; then
+      rm -rf "$temp_backup_dir"
+      die 1 "Backup verification failed"
+    fi
   fi
+  
+  # All operations successful - atomically rename temp directory to final name
+  ((debug)) && echo "DEBUG: Atomic rename from $temp_backup_dir to $fullbackup_dir"
+  
+  if ! mv "$temp_backup_dir" "$fullbackup_dir"; then
+    # If rename fails, try to clean up
+    rm -rf "$temp_backup_dir"
+    die 1 "Failed to finalize backup (atomic rename failed)"
+  fi
+  
+  # Clear temp_backup_dir since it's been successfully renamed
+  temp_backup_dir=""
 
   # Prune old backups if requested
   if ((keep_count > 0 || age_days > 0)); then
@@ -2100,8 +2135,9 @@ remote_create_backup() {
   # Generate timestamp
   timestamp=$(isodate)
 
-  # Calculate remote backup path
+  # Calculate remote backup paths
   remote_backup_dir="${remote_path}/${timestamp}${suffix}"
+  local remote_temp_dir="${remote_path}/.tmp.${timestamp}$$"
 
   # Check connection first
   if ! check_remote_connectivity; then
@@ -2200,9 +2236,27 @@ remote_create_backup() {
     -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes -o ConnectTimeout=$remote_timeout"
   )
 
-  # Use rsync with secure SSH options to copy files to remote host
-  if ! rsync "${rsync_opts[@]}" "${exclude_args[@]}" "$source_dir/" "$remote_user@$remote_host:$remote_backup_dir"; then
+  # Use rsync with secure SSH options to copy files to remote temporary directory
+  ((debug)) && echo "DEBUG: Creating remote backup in temporary directory: $remote_temp_dir"
+  
+  if ! rsync "${rsync_opts[@]}" "${exclude_args[@]}" "$source_dir/" "$remote_user@$remote_host:$remote_temp_dir"; then
     error "Failed to create remote backup"
+    # Clean up remote temp directory
+    ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "rm -rf '$remote_temp_dir'" 2>/dev/null || true
+    # Release remote lock if we acquired it
+    if ((use_locking)); then
+      ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "rm -rf '${remote_path}/.checkpoint.lock'" 2>/dev/null || true
+    fi
+    return 1
+  fi
+  
+  # Atomically rename remote temporary directory to final name
+  ((debug)) && echo "DEBUG: Atomic rename on remote: $remote_temp_dir -> $remote_backup_dir"
+  
+  if ! ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "mv '$remote_temp_dir' '$remote_backup_dir'"; then
+    error "Failed to finalize remote backup (atomic rename failed)"
+    # Clean up remote temp directory
+    ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "rm -rf '$remote_temp_dir'" 2>/dev/null || true
     # Release remote lock if we acquired it
     if ((use_locking)); then
       ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "rm -rf '${remote_path}/.checkpoint.lock'" 2>/dev/null || true
