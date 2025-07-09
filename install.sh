@@ -8,7 +8,7 @@ set -euo pipefail
 # Configuration
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 MAN_DIR="${MAN_DIR:-/usr/local/share/man/man1}"
-REPO_URL="${REPO_URL:-https://github.com/YOUR_REPO/checkpoint}"
+REPO_URL="${REPO_URL:-https://github.com/Open-Technology-Foundation/checkpoint}"
 BRANCH="${BRANCH:-main}"
 
 # Colors for output

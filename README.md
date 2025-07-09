@@ -31,20 +31,20 @@ Checkpoint bridges the gap between informal backup practices and enterprise-grad
 
 ```bash
 # Install with automatic dependency installation
-curl -fsSL https://raw.githubusercontent.com/YOUR_REPO/checkpoint/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Open-Technology-Foundation/checkpoint/main/install.sh | bash
 
 # Or with wget
-wget -qO- https://raw.githubusercontent.com/YOUR_REPO/checkpoint/main/install.sh | bash
+wget -qO- https://raw.githubusercontent.com/Open-Technology-Foundation/checkpoint/main/install.sh | bash
 
 # Install to custom location (no sudo required)
-curl -fsSL https://raw.githubusercontent.com/YOUR_REPO/checkpoint/main/install.sh | INSTALL_DIR=~/.local/bin bash
+curl -fsSL https://raw.githubusercontent.com/Open-Technology-Foundation/checkpoint/main/install.sh | INSTALL_DIR=~/.local/bin bash
 ```
 
 ### Manual Install
 
 ```bash
 # Download and make executable
-curl -fsSL https://raw.githubusercontent.com/YOUR_REPO/checkpoint/main/checkpoint -o checkpoint
+curl -fsSL https://raw.githubusercontent.com/Open-Technology-Foundation/checkpoint/main/checkpoint -o checkpoint
 chmod +x checkpoint
 sudo cp checkpoint /usr/local/bin/
 
