@@ -152,7 +152,7 @@ download_checkpoint() {
   local temp_dir=$(mktemp -d)
   cd "$temp_dir" || die "Failed to create temporary directory"
   
-  info "Downloading checkpoint..."
+  info "Downloading checkpoint..." >&2
   
   # Try curl first, then wget
   if command -v curl >/dev/null 2>&1; then
@@ -173,6 +173,7 @@ download_checkpoint() {
   # Make executable
   chmod +x checkpoint
   
+  # Only output the directory path to stdout
   echo "$temp_dir"
 }
 
@@ -181,7 +182,7 @@ install_manpage() {
   local checkpoint_path="$1"
   local temp_dir=$(dirname "$checkpoint_path")
   
-  info "Generating man page..."
+  info "Generating man page..." >&2
   
   # Create man page content
   cat > "$temp_dir/checkpoint.1" << 'EOF'
