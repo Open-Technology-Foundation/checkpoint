@@ -18,8 +18,8 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Helper functions
-info() { echo -e "${GREEN}[INFO]${NC} $*"; }
-warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+info() { echo -e "${GREEN}[INFO]${NC} $*" >&2; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 die() { error "$*"; exit 1; }
 
@@ -152,7 +152,7 @@ download_checkpoint() {
   local temp_dir=$(mktemp -d)
   cd "$temp_dir" || die "Failed to create temporary directory"
   
-  info "Downloading checkpoint..." >&2
+  info "Downloading checkpoint..."
   
   # Try curl first, then wget
   if command -v curl >/dev/null 2>&1; then
@@ -182,7 +182,7 @@ install_manpage() {
   local checkpoint_path="$1"
   local temp_dir=$(dirname "$checkpoint_path")
   
-  info "Generating man page..." >&2
+  info "Generating man page..."
   
   # Create man page content
   cat > "$temp_dir/checkpoint.1" << 'EOF'
