@@ -27,12 +27,31 @@ Checkpoint bridges the gap between informal backup practices and enterprise-grad
 
 ## Installation
 
-### Quick Install
+### One-Line Install
 
 ```bash
-# Make executable and install to system PATH
+# Install with automatic dependency installation
+curl -fsSL https://raw.githubusercontent.com/YOUR_REPO/checkpoint/main/install.sh | bash
+
+# Or with wget
+wget -qO- https://raw.githubusercontent.com/YOUR_REPO/checkpoint/main/install.sh | bash
+
+# Install to custom location (no sudo required)
+curl -fsSL https://raw.githubusercontent.com/YOUR_REPO/checkpoint/main/install.sh | INSTALL_DIR=~/.local/bin bash
+```
+
+### Manual Install
+
+```bash
+# Download and make executable
+curl -fsSL https://raw.githubusercontent.com/YOUR_REPO/checkpoint/main/checkpoint -o checkpoint
 chmod +x checkpoint
 sudo cp checkpoint /usr/local/bin/
+
+# Generate and install man page
+./create_manpage.sh
+sudo cp checkpoint.1 /usr/local/share/man/man1/
+sudo mandb
 
 # Optional: Install hardlink for space efficiency
 sudo apt install hardlink  # Ubuntu/Debian
