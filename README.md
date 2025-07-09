@@ -17,6 +17,8 @@ Checkpoint bridges the gap between informal backup practices and enterprise-grad
 ## Core Features
 
 - **Smart Snapshots**: Creates timestamped backups with automatic exclusions and metadata
+- **Atomic Operations**: Ensures backup integrity with temporary directories and atomic rename
+- **Concurrency Protection**: Lockfile mechanism prevents data corruption from parallel operations
 - **Powerful Comparison**: Visualizes differences between snapshots with color-coded output
 - **Flexible Restoration**: Supports complete or selective file recovery with preview mode
 - **Metadata Management**: Attaches searchable descriptions and tags to checkpoints
@@ -39,6 +41,8 @@ wget -qO- https://raw.githubusercontent.com/Open-Technology-Foundation/checkpoin
 # Install to custom location (no sudo required)
 curl -fsSL https://raw.githubusercontent.com/Open-Technology-Foundation/checkpoint/main/install.sh | INSTALL_DIR=~/.local/bin bash
 ```
+
+The installer also creates a `chkpoint` symlink for convenience, allowing you to use either `checkpoint` or `chkpoint` commands.
 
 ### Manual Install
 
@@ -226,6 +230,9 @@ checkpoint --metadata --update 20250430_091429 --set "status=approved"
 | `--no-sudo` | Never attempt privilege escalation |
 | `--hardlink` | Enable hardlinking for space efficiency |
 | `--prune-only` | Remove old backups without creating new one |
+| `--no-lock` | Disable lockfile mechanism (use with caution) |
+| `--lock-timeout N` | Lock acquisition timeout in seconds (default: 300) |
+| `--force-unlock` | Force removal of stale locks |
 
 ### Restore and Compare
 
@@ -404,6 +411,11 @@ This project is licensed under the GPL-3.0 License - see the [LICENSE](LICENSE) 
 
 ## Version
 
-Current version: **1.3.0**
+Current version: **1.5.0**
+
+### Recent Features
+- **v1.5.0**: Atomic backup operations with temporary directories
+- **v1.4.0**: Lockfile mechanism for concurrency protection
+- **v1.3.0**: Enhanced metadata management and remote operations
 
 For version history and changes, see the commit log or check `checkpoint --version`.
