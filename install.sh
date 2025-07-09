@@ -370,6 +370,17 @@ install_checkpoint() {
   
   # Check if we can write to install directory
   if check_root || [ -w "$INSTALL_DIR" ]; then
+    # Remove any existing checkpoint files/symlinks
+    if [ -e "$INSTALL_DIR/checkpoint" ] || [ -L "$INSTALL_DIR/checkpoint" ]; then
+      info "Removing existing checkpoint at $INSTALL_DIR/checkpoint..."
+      rm -f "$INSTALL_DIR/checkpoint"
+    fi
+    
+    if [ -e "$INSTALL_DIR/chkpoint" ] || [ -L "$INSTALL_DIR/chkpoint" ]; then
+      info "Removing existing chkpoint symlink at $INSTALL_DIR/chkpoint..."
+      rm -f "$INSTALL_DIR/chkpoint"
+    fi
+    
     info "Installing checkpoint to $INSTALL_DIR..."
     cp "$checkpoint_path" "$INSTALL_DIR/checkpoint"
     chmod +x "$INSTALL_DIR/checkpoint"
