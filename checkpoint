@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #shellcheck disable=SC1091,SC2155
 # Checkpoint - Utility for creating and restoring code directory snapshots
-# Version: 1.3.0
+# Version: 1.4.0
 set -euo pipefail
 
 # Ensure consistent environment
@@ -9,7 +9,7 @@ export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 export LC_ALL=C
 
 # Core configuration
-readonly -- VERSION='1.3.0'
+readonly -- VERSION='1.4.0'
 readonly -- TIMESTAMP_PATTERN='20[0-9][0-9][0-1][0-9][0-3][0-9]_[0-2][0-9][0-5][0-9][0-5][0-9]*'
 declare -- HARDLINK=$(command -v hardlink || echo '')
 
@@ -94,9 +94,20 @@ isodate() { date +'%Y%m%d_%H%M%S'; }
 
 # xcleanup: Clean up on script exit
 # Exit handler function registered with trap to ensure clean script termination
+# Also releases any locks that may be held
 # Args: $1 - exit code to use (default: 0)
 # Returns: Never returns (exits with specified code)
-xcleanup() { local -i exitcode=${1:-0}; exit "$exitcode"; }
+# Globals: lock_dir, use_locking
+xcleanup() { 
+  local -i exitcode=${1:-0}
+  
+  # Release lock if we're holding one
+  if ((use_locking)) && [[ -n "$lock_dir" ]]; then
+    release_lock >/dev/null 2>&1 || true
+  fi
+  
+  exit "$exitcode"
+}
 trap 'xcleanup $?' SIGINT SIGTERM EXIT
 
 # GLOBAL CONFIGURATION VARIABLES
@@ -151,6 +162,12 @@ declare -- description=''   # Human-readable checkpoint description text
 declare -- system_name=''   # Source system identifier for checkpoint metadata
 declare -a tags=()          # Array of key-value metadata tags (KEY=VALUE format)
 
+# Lock management settings
+declare -i use_locking=1    # Enable lockfile mechanism for concurrency protection (default: enabled)
+declare -i lock_timeout=300 # Timeout in seconds for acquiring lock (default: 5 minutes)
+declare -i force_unlock=0   # Force removal of stale locks
+declare -- lock_dir=''      # Path to current lock directory (set by acquire_lock)
+
 # Display help and usage information
 usage() {
   cat <<EOT
@@ -200,6 +217,9 @@ Options:
       --keep NUM        Keep only specified number of most recent backups
       --age DAYS        Keep only backups newer than specified days
   -p, --prune-only      Only prune backups without creating a new one
+      --no-lock         Disable lockfile mechanism (allows concurrent operations - DANGEROUS)
+      --lock-timeout SECONDS  Timeout for acquiring lock (default: 300 seconds / 5 minutes)
+      --force-unlock    Force removal of stale locks before proceeding
   -V, --version         Print version and exit ($VERSION)
   -h, --help            Display this help
 
@@ -333,6 +353,149 @@ get_relative_path() {
     # Last resort: just return target path
     echo "$to"
   fi
+}
+
+# LOCK MANAGEMENT FUNCTIONS
+
+# acquire_lock: Create and acquire a lockfile for the given backup directory
+# Prevents concurrent operations on the same backup directory
+# Args: $1 - Backup directory path
+# Returns: 0 on success, 1 on failure
+# Globals: lock_dir, lock_timeout, force_unlock, verbose, debug
+acquire_lock() {
+  local backup_dir="$1"
+  local lock_acquired=0
+  local start_time=$(date +%s)
+  local current_time
+  local elapsed_time
+  local lock_pid
+  local lock_timestamp
+  
+  # Set lock directory path
+  lock_dir="$backup_dir/.checkpoint.lock"
+  
+  ((debug)) && echo "DEBUG: Attempting to acquire lock at $lock_dir"
+  
+  while ((lock_acquired == 0)); do
+    # Try to create lock directory atomically
+    if mkdir "$lock_dir" 2>/dev/null; then
+      # Lock acquired, write our PID and timestamp
+      echo "$$" > "$lock_dir/pid"
+      date -u +%s > "$lock_dir/timestamp"
+      hostname > "$lock_dir/hostname" 2>/dev/null || true
+      lock_acquired=1
+      ((verbose)) && echo "Lock acquired for backup directory: $backup_dir"
+      ((debug)) && echo "DEBUG: Lock details - PID: $$, Dir: $lock_dir"
+      return 0
+    else
+      # Lock exists, check if it's stale
+      if [[ -f "$lock_dir/pid" ]]; then
+        lock_pid=$(cat "$lock_dir/pid" 2>/dev/null || echo "0")
+        lock_timestamp=$(cat "$lock_dir/timestamp" 2>/dev/null || echo "0")
+        
+        # Check if the process is still running
+        if ! kill -0 "$lock_pid" 2>/dev/null; then
+          # Process is dead, lock is stale
+          ((verbose)) && echo "Detected stale lock from PID $lock_pid, removing..."
+          rm -rf "$lock_dir"
+          continue
+        fi
+        
+        # Check if lock is too old (older than 24 hours)
+        current_time=$(date +%s)
+        if (( (current_time - lock_timestamp) > 86400 )); then
+          ((verbose)) && echo "Lock is older than 24 hours, considering it stale..."
+          if ((force_unlock)); then
+            rm -rf "$lock_dir"
+            continue
+          else
+            error "Lock exists and is older than 24 hours."
+            error "Use --force-unlock to remove it, or investigate PID $lock_pid"
+            return 1
+          fi
+        fi
+      fi
+      
+      # Check timeout
+      current_time=$(date +%s)
+      elapsed_time=$((current_time - start_time))
+      
+      if ((elapsed_time >= lock_timeout)); then
+        error "Failed to acquire lock after $lock_timeout seconds"
+        error "Another checkpoint process (PID: $lock_pid) is running on this backup directory"
+        error "Use --force-unlock to forcibly remove the lock if you're sure no other process is running"
+        return 1
+      fi
+      
+      # Wait a bit before retrying
+      ((debug)) && echo "DEBUG: Lock held by PID $lock_pid, waiting... ($elapsed_time/$lock_timeout seconds)"
+      sleep 1
+    fi
+  done
+}
+
+# release_lock: Remove the lockfile for the given backup directory
+# Should be called when backup operation completes or on error
+# Args: $1 - Backup directory path (optional, uses global lock_dir if not provided)
+# Returns: 0 on success, 1 on failure
+# Globals: lock_dir, verbose, debug
+release_lock() {
+  local backup_dir="${1:-}"
+  local target_lock_dir
+  
+  if [[ -n "$backup_dir" ]]; then
+    target_lock_dir="$backup_dir/.checkpoint.lock"
+  elif [[ -n "$lock_dir" ]]; then
+    target_lock_dir="$lock_dir"
+  else
+    # No lock to release
+    return 0
+  fi
+  
+  ((debug)) && echo "DEBUG: Attempting to release lock at $target_lock_dir"
+  
+  if [[ -d "$target_lock_dir" ]]; then
+    # Verify we own the lock by checking PID
+    if [[ -f "$target_lock_dir/pid" ]]; then
+      local lock_pid=$(cat "$target_lock_dir/pid" 2>/dev/null || echo "0")
+      if [[ "$lock_pid" == "$$" ]]; then
+        # We own the lock, safe to remove
+        rm -rf "$target_lock_dir"
+        ((verbose)) && echo "Lock released for backup directory"
+        ((debug)) && echo "DEBUG: Lock successfully released"
+        return 0
+      else
+        # We don't own this lock
+        ((debug)) && echo "DEBUG: Lock owned by different PID ($lock_pid), not releasing"
+        return 1
+      fi
+    else
+      # No PID file, remove the lock directory anyway (shouldn't happen)
+      rm -rf "$target_lock_dir"
+      return 0
+    fi
+  fi
+  
+  # No lock exists
+  return 0
+}
+
+# force_remove_lock: Forcibly remove a lockfile
+# Use with caution - only when certain no other process is running
+# Args: $1 - Backup directory path
+# Returns: 0 on success, 1 on failure
+# Globals: verbose
+force_remove_lock() {
+  local backup_dir="$1"
+  local target_lock_dir="$backup_dir/.checkpoint.lock"
+  
+  if [[ -d "$target_lock_dir" ]]; then
+    ((verbose)) && echo "Forcibly removing lock at $target_lock_dir"
+    rm -rf "$target_lock_dir"
+    return $?
+  fi
+  
+  return 0
 }
 
 # check_disk_space: Verify sufficient disk space for backup
@@ -1490,6 +1653,16 @@ main() {
                   ;;
     -p|--prune-only)
                   prune_only=1 ;;
+       --no-lock) use_locking=0 ;;
+       --lock-timeout)
+                  noarg "$@"; shift
+                  if ! [[ "$1" =~ ^[0-9]+$ ]]; then
+                    die 22 "Invalid lock timeout value: '$1'"
+                  fi
+                  lock_timeout="$1"
+                  ;;
+       --force-unlock)
+                  force_unlock=1 ;;
     -V|--version) echo "$PRG $VERSION"; exit 0 ;;
     -h|--help)    usage ;;
     -[dsnqvlrftxkphV]*) #shellcheck disable=SC2046 #split up single options
@@ -1735,6 +1908,12 @@ main() {
     exit $?
   fi
 
+  # Acquire lock for backup directory if locking is enabled
+  if ((use_locking)); then
+    if ! acquire_lock "$backup_dir"; then
+      die 1 "Failed to acquire lock for backup directory '$backup_dir'"
+    fi
+  fi
 
   # Check disk space
   if ! check_disk_space "$backup_dir"; then
@@ -1840,6 +2019,11 @@ main() {
     # In quiet mode, just print the backup path
     echo "$fullbackup_dir"
   fi
+  
+  # Release lock after successful backup
+  if ((use_locking)); then
+    release_lock "$backup_dir"
+  fi
 }
 
 # REMOTE OPERATIONS FUNCTIONS
@@ -1933,9 +2117,60 @@ remote_create_backup() {
     -o "LogLevel=ERROR"
   )
 
+  # Acquire remote lock if locking is enabled
+  if ((use_locking)); then
+    ((verbose)) && echo "Acquiring remote lock..."
+    
+    # Try to create remote lock directory
+    local lock_acquired=0
+    local start_time=$(date +%s)
+    local current_time
+    local elapsed_time
+    
+    while ((lock_acquired == 0)); do
+      # Try to create lock directory on remote system
+      if ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- \
+         "mkdir '${remote_path}/.checkpoint.lock' 2>/dev/null && echo \$\$ > '${remote_path}/.checkpoint.lock/pid' && echo \$(date -u +%s) > '${remote_path}/.checkpoint.lock/timestamp' && hostname > '${remote_path}/.checkpoint.lock/hostname'"; then
+        lock_acquired=1
+        ((verbose)) && echo "Remote lock acquired"
+      else
+        # Check if lock is stale
+        local remote_lock_pid
+        remote_lock_pid=$(ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "cat '${remote_path}/.checkpoint.lock/pid' 2>/dev/null" || echo "0")
+        
+        if [[ "$remote_lock_pid" != "0" ]]; then
+          # Check if remote process is still running
+          if ! ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "kill -0 '$remote_lock_pid' 2>/dev/null"; then
+            # Process is dead, remove stale lock
+            ((verbose)) && echo "Removing stale remote lock from PID $remote_lock_pid"
+            ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "rm -rf '${remote_path}/.checkpoint.lock'"
+            continue
+          fi
+        fi
+        
+        # Check timeout
+        current_time=$(date +%s)
+        elapsed_time=$((current_time - start_time))
+        
+        if ((elapsed_time >= lock_timeout)); then
+          error "Failed to acquire remote lock after $lock_timeout seconds"
+          error "Another process may be using the remote backup directory"
+          return 1
+        fi
+        
+        ((debug)) && echo "DEBUG: Remote lock held, waiting... ($elapsed_time/$lock_timeout seconds)"
+        sleep 1
+      fi
+    done
+  fi
+
   # Ensure the remote parent directory exists - use -- to separate SSH options from command
   if ! ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- mkdir -p "${remote_path}" 2>/dev/null; then
     error "Cannot create remote directory path ${remote_path}"
+    # Release remote lock if we acquired it
+    if ((use_locking)); then
+      ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "rm -rf '${remote_path}/.checkpoint.lock'" 2>/dev/null || true
+    fi
     return 1
   fi
 
@@ -1968,7 +2203,16 @@ remote_create_backup() {
   # Use rsync with secure SSH options to copy files to remote host
   if ! rsync "${rsync_opts[@]}" "${exclude_args[@]}" "$source_dir/" "$remote_user@$remote_host:$remote_backup_dir"; then
     error "Failed to create remote backup"
+    # Release remote lock if we acquired it
+    if ((use_locking)); then
+      ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "rm -rf '${remote_path}/.checkpoint.lock'" 2>/dev/null || true
+    fi
     return 1
+  fi
+
+  # Release remote lock after successful backup
+  if ((use_locking)); then
+    ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "rm -rf '${remote_path}/.checkpoint.lock'" 2>/dev/null || true
   fi
 
   ((verbose)) && echo "Remote backup created successfully at ${remote_user}@${remote_host}:${remote_backup_dir}"

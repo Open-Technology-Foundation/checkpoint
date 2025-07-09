@@ -147,6 +147,30 @@ checkpoint --prune-only --keep 3
 checkpoint --verify
 ```
 
+### Concurrency Protection
+
+Checkpoint includes a lockfile mechanism to prevent data corruption from concurrent operations:
+
+```bash
+# Normal operation (locking enabled by default)
+checkpoint
+
+# Disable locking (DANGEROUS - allows concurrent operations)
+checkpoint --no-lock
+
+# Set custom lock timeout (default: 300 seconds)
+checkpoint --lock-timeout 60
+
+# Force removal of stale locks
+checkpoint --force-unlock
+```
+
+The locking mechanism:
+- Prevents multiple checkpoint instances from operating on the same backup directory
+- Automatically detects and removes stale locks from crashed processes
+- Works with both local and remote operations
+- Can be disabled for special use cases (use with caution)
+
 ### Metadata Operations
 
 ```bash
@@ -285,6 +309,9 @@ bats tests/test_checkpoint.bats -f "backup creation"
 
 # Test remote functionality
 bats tests/test_remote.bats
+
+# Test locking mechanism
+bats tests/test_locking.bats
 
 # Verbose testing
 bats -v tests/test_checkpoint.bats
