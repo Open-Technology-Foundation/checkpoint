@@ -317,14 +317,21 @@ usage() {
   cat <<EOT
 $PRG $VERSION - create and restore checkpoint backups
 
-Creates timestamped backup snapshots of a directory. Default destination:
+Creates timestamped backup snapshots of a directory.
 
-   /var/backups/DIR_NAME/TIMESTAMP[_SUFFIX]
+Default backup locations:
+ - Root/sudo users: /var/backups/DIR_NAME/TIMESTAMP[_SUFFIX]
+ - Non-root users:  ~/.checkpoint/DIR_NAME/TIMESTAMP[_SUFFIX]
+ - Custom location: Set CHECKPOINT_BACKUP_DIR environment variable
 
- - Excludes directories: backup_dir, .gudang/, temp/, .temp/, tmp/
- - Excludes files: *~ ~*
+Automatic exclusions:
+ - Directories: backup_dir, .gudang/, temp/, .temp/, tmp/
+ - Files: *~ ~*
 
-Requires sudo/root access.
+Privilege handling:
+ - Automatically detects if sudo is needed for backup directory
+ - Use --no-sudo to prevent privilege escalation
+ - Non-root users can backup to user-writable directories
 
 To enable hardlinking (for space efficiency), install hardlink:
     apt install hardlink
@@ -336,7 +343,7 @@ Usage:
 
 Options:
   -d, --backup-dir DIR  Backup directory for checkpoints
-                        (default: /var/backups/DIR_NAME)
+                        (default: context-dependent, see above)
   -s, --suffix SUF      Optional suffix to add to checkpoint name
                         (alphanumeric, dots, underscores and hyphens only)
   -n, --no-hardlink     Do not hardlink to previous backup
@@ -384,14 +391,24 @@ Restore Options:
       --files PATTERN   Specific files or patterns to restore or compare (can be used multiple times)
 
 Examples:
-  # Create checkpoint of current directory
+  # Create checkpoint of current directory (uses smart defaults)
   $PRG
 
-  # Create checkpoint of ~/myscript dir in custom location
+  # Non-root user: backup to home directory
+  $PRG ~/myproject  # Backs up to ~/.checkpoint/myproject/
+
+  # Specify custom backup directory
   $PRG -d ~/backups/myproject ~/myscript
+
+  # Use environment variable for default location
+  export CHECKPOINT_BACKUP_DIR=~/my-backups
+  $PRG ~/myproject  # Backs up to ~/my-backups/myproject/
 
   # Create checkpoint with descriptive suffix
   $PRG -s "before-api-refactor"
+
+  # Prevent sudo escalation for system directories
+  $PRG --no-sudo ~/myproject
   
   # List existing checkpoints
   $PRG --list
@@ -434,6 +451,22 @@ Examples:
 
   # Prune backups without creating a new one
   $PRG --prune-only --keep 3
+
+Environment Variables:
+  CHECKPOINT_BACKUP_DIR   Default backup directory for all operations
+                          Overrides the built-in directory selection logic
+                          Example: export CHECKPOINT_BACKUP_DIR=~/backups
+
+  CHECKPOINT_AUTO_CONFIRM Automatically confirm directory creation prompts
+                          Set to any value to skip interactive prompts
+                          Example: export CHECKPOINT_AUTO_CONFIRM=1
+
+Notes:
+  - Non-root users can backup to any writable directory
+  - The script automatically detects when sudo is needed
+  - Use --no-sudo to ensure no privilege escalation occurs
+  - Backups preserve file permissions and timestamps
+  - Hardlinking saves space by linking unchanged files
 EOT
   exit "${1:-0}"
 }

@@ -13,10 +13,12 @@ Checkpoint bridges the gap between informal backup practices and enterprise-grad
 - **Flexible Recovery**: Restore entire directories or specific file patterns
 - **Cross-Platform**: Consistent behavior on Linux and macOS systems
 - **Automation Ready**: Works reliably in CI/CD pipelines and scripts
+- **Non-Root Friendly**: Works seamlessly for regular users with smart directory defaults
 
 ## Core Features
 
 - **Smart Snapshots**: Creates timestamped backups with automatic exclusions and metadata
+- **Intelligent Defaults**: Automatically selects appropriate backup directories based on user privileges
 - **Atomic Operations**: Ensures backup integrity with temporary directories and atomic rename
 - **Concurrency Protection**: Lockfile mechanism prevents data corruption from parallel operations
 - **Powerful Comparison**: Visualizes differences between snapshots with color-coded output
@@ -26,6 +28,7 @@ Checkpoint bridges the gap between informal backup practices and enterprise-grad
 - **Space Optimization**: Uses hardlinking between versions to minimize disk usage
 - **Backup Rotation**: Manages history by count or age for automatic cleanup
 - **Automation Support**: Non-interactive operation with timeout safeguards
+- **Smart Privilege Handling**: Only escalates privileges when necessary, works without sudo
 
 ## Installation
 
@@ -76,6 +79,25 @@ brew install hardlink       # macOS
 - SSH client - For remote operations only
 
 ## Quick Start
+
+### For Non-Root Users
+
+```bash
+# Create checkpoint of current directory (backs up to ~/.checkpoint/)
+checkpoint
+
+# Backup a specific directory
+checkpoint ~/my-project
+
+# Use custom backup location
+checkpoint -d ~/backups/project ~/my-project
+
+# Set default backup directory for all operations
+export CHECKPOINT_BACKUP_DIR=~/my-backups
+checkpoint ~/my-project
+```
+
+### Basic Operations
 
 ```bash
 # Create checkpoint of current directory
@@ -263,7 +285,11 @@ checkpoint --metadata --update 20250430_091429 --set "status=approved"
 ### Environment Variables
 
 ```bash
-export CHECKPOINT_AUTO_CONFIRM=1  # Skip interactive prompts
+# Set default backup directory for all operations
+export CHECKPOINT_BACKUP_DIR=~/my-backups
+
+# Skip interactive prompts
+export CHECKPOINT_AUTO_CONFIRM=1
 ```
 
 ### CI/CD Examples
@@ -290,6 +316,33 @@ All interactive prompts have built-in timeouts:
 - Directory creation: 30 seconds
 - Restore confirmation: 30 seconds  
 - Checkpoint selection: 60 seconds
+
+## Backup Directory Locations
+
+### Smart Directory Selection
+
+Checkpoint intelligently selects backup directories based on your user context:
+
+| User Type | Default Location | Example |
+|-----------|------------------|---------|
+| Root/sudo | `/var/backups/DIR_NAME/` | `/var/backups/myproject/` |
+| Regular user | `~/.checkpoint/DIR_NAME/` | `~/.checkpoint/myproject/` |
+| Custom | `$CHECKPOINT_BACKUP_DIR/DIR_NAME/` | `~/backups/myproject/` |
+
+### Privilege Management
+
+- **Automatic Detection**: Checkpoint only requests sudo when the backup directory requires it
+- **Non-Root Friendly**: Regular users can backup to any writable directory without sudo
+- **Explicit Control**: Use `--no-sudo` to prevent any privilege escalation
+- **Smart Escalation**: If a directory needs privileges and sudo is available, checkpoint will automatically escalate
+
+```bash
+# Force non-root operation
+checkpoint --no-sudo ~/myproject
+
+# Let checkpoint decide (recommended)
+checkpoint ~/myproject
+```
 
 ## Default Exclusions
 
