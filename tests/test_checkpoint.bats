@@ -121,8 +121,8 @@ count_backups() {
   # Check that command fails with expected error code
   [ "$status" -eq 22 ]
   
-  # Check output contains error message about invalid option
-  [[ "$output" =~ "error: Invalid option" ]]
+  # Check output contains error message about invalid option (with new format)
+  [[ "$output" =~ "✗ Invalid option" ]]
 }
 
 # Test handling of non-existent directory
@@ -133,8 +133,8 @@ count_backups() {
   # Check that command fails with expected error code
   [ "$status" -eq 1 ]
   
-  # Check output contains error message
-  [[ "$output" =~ "error: No such directory" ]]
+  # Check output contains error message (with new format)
+  [[ "$output" =~ "✗ No such directory" ]]
 }
 
 # Test multiple backups

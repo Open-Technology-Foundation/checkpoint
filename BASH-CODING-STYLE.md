@@ -1,0 +1,1 @@
+/ai/scripts/claude/BASH-CODING-STYLE.md

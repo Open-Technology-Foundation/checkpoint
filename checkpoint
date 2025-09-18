@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#shellcheck disable=SC1091,SC2155
+#shellcheck disable=SC1091
 # Checkpoint - Utility for creating and restoring code directory snapshots
-# Version: 1.5.0
+# Version: 1.6.0
 set -euo pipefail
 
 # Ensure consistent environment
@@ -9,62 +9,75 @@ export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 export LC_ALL=C
 
 # Core configuration
-readonly -- VERSION='1.5.0'
+readonly -- VERSION='1.6.0'
 readonly -- TIMESTAMP_PATTERN='20[0-9][0-9][0-1][0-9][0-3][0-9]_[0-2][0-9][0-5][0-9][0-5][0-9]*'
-declare -- HARDLINK=$(command -v hardlink || echo '')
+declare -- HARDLINK
+HARDLINK=$(command -v hardlink || echo '')
+
+# Script identification using standard pattern
+declare -- PRG0
+PRG0=$(readlink -en -- "$0" 2>/dev/null || realpath -- "$0" 2>/dev/null || echo "$0")
+PRG=${PRG0##*/}
+PRGDIR=${PRG0%/*}
+#shellcheck disable=SC2034
+readonly -- VERSION PRG0 PRG PRGDIR
 
 # CROSS-PLATFORM HELPER FUNCTIONS
 
-# get_script_path: Cross-platform solution for getting absolute script path
-# Returns: Absolute path to the script
-get_script_path() {
-  local script_path
-  
-  if command -v readlink >/dev/null 2>&1 && readlink -e -- "$0" >/dev/null 2>&1; then
-    # Linux with GNU readlink
-    script_path=$(readlink -e -- "$0")
-  elif command -v realpath >/dev/null 2>&1; then
-    # Systems with realpath
-    script_path=$(realpath -- "$0")
-  else
-    # Fallback for systems without readlink/realpath
-    script_path="$0"
-    if [[ $script_path != /* ]]; then
-      script_path="$PWD/$script_path"
-    fi
-  fi
-  
-  echo "$script_path"
+# Standard colours
+#shellcheck disable=SC2015
+[[ -t 2 ]] && declare -- RED=$'\033[0;31m' GREEN=$'\033[0;32m' YELLOW=$'\033[0;33m' CYAN=$'\033[0;36m' NC=$'\033[0m' || declare -- RED='' GREEN='' YELLOW='' CYAN='' NC=''
+readonly -- RED GREEN YELLOW CYAN NC
+# For backward compatibility
+declare -- BOLD NOCOLOR
+[[ -t 1 ]] && BOLD=$'\033[1m' || BOLD=''
+[[ -t 1 ]] && NOCOLOR=$'\033[0m' || NOCOLOR=''
+readonly -- BOLD NOCOLOR
+
+# Global verbosity setting
+declare -i verbose=1
+
+# Standard Messaging Functions
+# Core message function using FUNCNAME for context
+_msg() {
+  local -- status="${FUNCNAME[1]}" prefix="$PRG:" msg
+  case "$status" in
+    success) prefix+=" ${GREEN}✓${NC}" ;;
+    warn)    prefix+=" ${YELLOW}⚡${NC}" ;;
+    info)    prefix+=" ${CYAN}◉${NC}" ;;
+    error)   prefix+=" ${RED}✗${NC}" ;;
+    *)       ;;
+  esac
+  for msg in "$@"; do printf '%s %s\n' "$prefix" "$msg"; done
 }
+# Conditional output based on verbosity
+vecho() { ((verbose)) || return 0; _msg "$@"; }
+success() { ((verbose)) || return 0; >&2 _msg "$@"; }
+warn() { ((verbose)) || return 0; >&2 _msg "$@"; }
+info() { ((verbose)) || return 0; >&2 _msg "$@"; }
+# Unconditional output
+error() { >&2 _msg "$@"; }
+die() { (($# > 1)) && error "${@:2}"; exit "${1:-0}"; }
 
-# Script identification
-readonly -- PRG0="$(get_script_path)"
-#shellcheck disable=SC2034
-readonly -- PRGDIR="${PRG0%/*}" PRG="${PRG0##*/}"
-
-# Terminal colors (only when output is a terminal)
-declare -- RED='' GREEN='' YELLOW='' CYAN='' BOLD='' NOCOLOR=''
-if [[ -t 1 ]]; then
-  RED=$'\033[0;31m'
-  GREEN=$'\033[0;32m'
-  YELLOW=$'\033[0;33m'
-  CYAN=$'\033[0;36m'
-  BOLD=$'\033[1m'
-  NOCOLOR=$'\033[0m'
-fi
-
-# Error handling functions
-# error: Print formatted error messages to stderr with color coding
-# Outputs errors in consistent format with optional color highlighting
-# Args: One or more error messages
-# Returns: Nothing (outputs to stderr)
-error() { local msg; for msg in "$@"; do >&2 printf '%s: %serror%s: %s\n' "$PRG" "$RED" "$NOCOLOR" "$msg"; done; }
-
-# die: Print error message and exit with specified code
-# Combines error output with script termination for fatal conditions
-# Args: [exitcode] [error_message...]
-# Returns: Never returns (exits with specified code)
-die() { local -i exitcode=1; if (($#)); then exitcode=$1; shift; fi; if (($#)); then error "$@"; fi; exit "$exitcode"; }
+# Utility Functions
+# Display declared variables
+decp() { declare -p "$@" | sed 's/^declare -[a-zA-Z-]* //'; }
+# Trim whitespace
+trim() {
+  local v="$*"
+  v="${v#"${v%%[![:blank:]]*}"}"
+  echo -n "${v%"${v##*[![:blank:]]}"}"
+}
+# Pluralization helper
+s() { (( ${1:-1} == 1 )) || echo -n 's'; }
+# yes/no prompt
+yn() {
+  ((verbose)) || return 0
+  local -- reply
+  read -r -n1 -p "$PRG: ${YELLOW}$1${NC} y/n " reply
+  echo
+  [[ ${reply,,} == y ]]
+}
 
 # Verify required dependencies
 for cmd in rsync find stat; do
@@ -82,9 +95,14 @@ fi
 # Validates that command-line options have proper arguments and prevents
 # options from being treated as arguments to other options
 # Args: $1 - option name, $2+ - remaining args
-# Returns: true if valid, dies with error if missing argument
+# Returns: 0 if valid, dies with error if missing argument
 # Example: noarg "--backup-dir" "$@"
-noarg() { if (($# < 2)) || [[ ${2:0:1} == '-' ]]; then die 2 "Missing argument for option '$1'"; fi; true; }
+noarg() {
+  if (($# < 2)) || [[ ${2:0:1} == '-' ]]; then
+    die 2 "Missing argument for option '$1'"
+  fi
+  return 0
+}
 
 # isodate: Generate timestamp in YYYYMMDD_HHMMSS format for checkpoint names
 # Creates consistent timestamp format used throughout the application for
@@ -123,10 +141,11 @@ trap 'xcleanup $?' SIGINT SIGTERM EXIT
 declare -- source_dir=''    # Directory to back up (defaults to PWD)
 declare -- backup_dir=''    # Where checkpoints are stored (defaults to /var/backups/DIR_NAME)
 declare -- suffix=''        # Optional suffix for checkpoint names (sanitized alphanumeric)
-declare -i verbose=1        # Output verbosity level (0=quiet, 1=verbose)
+# verbose already declared globally above
 declare -i debug=0          # Enable debug information output
 declare -i list_mode=0      # List checkpoints instead of creating new ones
-declare -i hardlink=$( [[ -n $HARDLINK ]] && echo 1 || echo 0 ) # Use hardlinking when available for space efficiency
+declare -i hardlink
+hardlink=$( [[ -n "$HARDLINK" ]] && echo 1 || echo 0 ) # Use hardlinking when available for space efficiency
 declare -a exclude_patterns=() # User-defined exclusion patterns beyond defaults
 
 # Remote operation settings
@@ -299,15 +318,15 @@ Examples:
   # Prune backups without creating a new one
   $PRG --prune-only --keep 3
 EOT
-  exit 0
+  exit "${1:-0}"
 }
 
 # get_owner_info: Get owner and group of a file/directory in a cross-platform way
 # Args: $1 - Path to file/directory
 # Returns: Space-separated owner and group names (e.g. "user group")
 get_owner_info() {
-  local path="$1"
-  local owner group
+  local -- path="$1"
+  local -- owner group
   
   if stat --version 2>/dev/null | grep -q GNU; then
     # GNU stat (Linux)
@@ -326,7 +345,7 @@ get_owner_info() {
 # Args: $1 - Path to convert
 # Returns: Absolute path with symlinks resolved when possible
 get_canonical_path() {
-  local path="$1"
+  local -- path="$1"
   
   if command -v readlink >/dev/null 2>&1 && readlink -f -- "$path" >/dev/null 2>&1; then
     # Linux with GNU readlink
@@ -348,8 +367,8 @@ get_canonical_path() {
 # Args: $1 - Source directory, $2 - Target directory
 # Returns: Relative path from source to target, or target path if calculation fails
 get_relative_path() {
-  local from="$1"
-  local to="$2"
+  local -- from="$1"
+  local -- to="$2"
   
   if command -v realpath >/dev/null 2>&1; then
     # Use realpath if available
@@ -371,10 +390,11 @@ get_relative_path() {
 # Returns: 0 on success, 1 on failure
 # Globals: lock_dir, lock_timeout, force_unlock, verbose, debug
 acquire_lock() {
-  local backup_dir="$1"
-  local lock_acquired=0
-  local start_time=$(date +%s)
-  local current_time
+  local -- backup_dir="$1"
+  local -i lock_acquired=0
+  local -i start_time
+  start_time=$(date +%s)
+  local -i current_time
   local elapsed_time
   local lock_pid
   local lock_timestamp
@@ -448,7 +468,7 @@ acquire_lock() {
 # Returns: 0 on success, 1 on failure
 # Globals: lock_dir, verbose, debug
 release_lock() {
-  local backup_dir="${1:-}"
+  local -- backup_dir="${1:-}"
   local target_lock_dir
   
   if [[ -n "$backup_dir" ]]; then
@@ -465,7 +485,8 @@ release_lock() {
   if [[ -d "$target_lock_dir" ]]; then
     # Verify we own the lock by checking PID
     if [[ -f "$target_lock_dir/pid" ]]; then
-      local lock_pid=$(cat "$target_lock_dir/pid" 2>/dev/null || echo "0")
+      local -i lock_pid
+      lock_pid=$(cat "$target_lock_dir/pid" 2>/dev/null || echo "0")
       if [[ "$lock_pid" == "$$" ]]; then
         # We own the lock, safe to remove
         rm -rf "$target_lock_dir"
@@ -494,8 +515,8 @@ release_lock() {
 # Returns: 0 on success, 1 on failure
 # Globals: verbose
 force_remove_lock() {
-  local backup_dir="$1"
-  local target_lock_dir="$backup_dir/.checkpoint.lock"
+  local -- backup_dir="$1"
+  local -- target_lock_dir="$backup_dir/.checkpoint.lock"
   
   if [[ -d "$target_lock_dir" ]]; then
     ((verbose)) && echo "Forcibly removing lock at $target_lock_dir"
@@ -511,8 +532,8 @@ force_remove_lock() {
 # Returns: 0 if sufficient space is available, 1 if not
 # Globals: source_dir
 check_disk_space() {
-  local dir="$1"
-  local src_size required_space available_space
+  local -- dir="$1"
+  local -i src_size required_space available_space
   
   # Get source size in KB
   src_size=$(du -sk "$source_dir" | cut -f1)
@@ -531,8 +552,8 @@ check_disk_space() {
 # Args: $1 - Path to file
 # Returns: Checksum string (or size+mtime as fallback)
 calculate_checksum() {
-  local file="$1"
-  local checksum=""
+  local -- file="$1"
+  local -- checksum=''
 
   if command -v sha256sum >/dev/null 2>&1; then
     # Prefer SHA-256 on Linux
@@ -562,6 +583,29 @@ calculate_checksum() {
   echo "$checksum"
 }
 
+# should_exclude: Check if a file/path should be excluded based on standard patterns
+# Args: $1 - Path to check (relative to source dir)
+# Returns: 0 if should be excluded, 1 if should be included
+should_exclude() {
+  local -- path="$1"
+  local -- filename="${path##*/}"
+
+  # Check standard exclusion patterns
+  [[ "$path" =~ \.gudang/ ]] && return 0
+  [[ "$path" =~ ^temp/ ]] && return 0
+  [[ "$path" =~ ^\.temp/ ]] && return 0
+  [[ "$path" =~ ^tmp/ ]] && return 0
+  [[ "$path" =~ /temp/ ]] && return 0
+  [[ "$path" =~ /\.temp/ ]] && return 0
+  [[ "$path" =~ /tmp/ ]] && return 0
+  [[ "$filename" == ~* ]] && return 0
+  [[ "$filename" == *~ ]] && return 0
+  [[ "$path" =~ ^\.tmp\. ]] && return 0
+  [[ "$path" =~ ^\.checkpoint\.lock/ ]] && return 0
+
+  return 1  # Don't exclude
+}
+
 # verify_backup: Verify backup integrity with comprehensive checks
 # Performs file count comparison, then either size-based verification (for large
 # backups) or full checksum verification (for smaller backups)
@@ -576,15 +620,23 @@ verify_backup() {
   local -i files_matched=0
   local -i detailed_check_limit=100  # Only do detailed checksums for this many files
 
-  # Step 1: Basic file count check
-  local src_count
-  local bkp_count
-  src_count=$(find "$source_dir" -type f | wc -l)
+  # Step 1: Basic file count check (excluding files that should be excluded)
+  local -i src_count=0
+  local -i bkp_count
+
+  # Count non-excluded files in source
+  while IFS= read -r file; do
+    local relpath="${file#"$source_dir"/}"
+    if ! should_exclude "$relpath"; then
+      ((src_count+=1))
+    fi
+  done < <(find "$source_dir" -type f -print)
+
   bkp_count=$(find "$backup_dir" -type f | wc -l)
 
   if [[ $src_count -ne $bkp_count ]]; then
     error "Verification failed: Source has $src_count files, backup has $bkp_count files"
-    ((errors++))
+    ((errors+=1))
   else
     ((verbose)) && echo "Basic verification: File count matches ($src_count files)"
   fi
@@ -603,10 +655,10 @@ verify_backup() {
       tmp_src_list=$(mktemp)
       tmp_bkp_list=$(mktemp)
 
-      # Get file lists with sizes
+      # Get file lists with sizes (excluding files that should be excluded)
       #shellcheck disable=SC2015
-      (cd "$source_dir" && find . -type f -exec stat --format="%s %n" {} \; 2>/dev/null ||
-       find . -type f -exec stat -f "%z %N" {} \; 2>/dev/null) | sort > "$tmp_src_list"
+      (cd "$source_dir" && find . -type f ! -path "*/\.gudang/*" ! -path "*/temp/*" ! -path "*/\.temp/*" ! -path "*/tmp/*" ! -name "*~" ! -name "~*" ! -path "*/\.tmp\.*" ! -path "*/\.checkpoint\.lock/*" -exec stat --format="%s %n" {} \; 2>/dev/null ||
+       find . -type f ! -path "*/\.gudang/*" ! -path "*/temp/*" ! -path "*/\.temp/*" ! -path "*/tmp/*" ! -name "*~" ! -name "~*" ! -path "*/\.tmp\.*" ! -path "*/\.checkpoint\.lock/*" -exec stat -f "%z %N" {} \; 2>/dev/null) | sort > "$tmp_src_list"
 
       #shellcheck disable=SC2015
       (cd "$backup_dir" && find . -type f -exec stat --format="%s %n" {} \; 2>/dev/null ||
@@ -615,7 +667,7 @@ verify_backup() {
       # Compare the lists
       if ! cmp -s "$tmp_src_list" "$tmp_bkp_list"; then
         error "Verification failed: Size mismatch detected"
-        ((errors++))
+        ((errors+=1))
 
         if ((debug)); then
           echo "Showing first 10 different files:"
@@ -634,14 +686,21 @@ verify_backup() {
 
       # Process each file in source directory
       while IFS= read -r srcfile; do
-        ((files_checked++))
         local relpath="${srcfile#"$source_dir"/}"
+
+        # Skip excluded files
+        if should_exclude "$relpath"; then
+          ((debug)) && echo "DEBUG: Skipping excluded file: $relpath"
+          continue
+        fi
+
+        ((files_checked+=1))
         local bkpfile="$backup_dir"/"$relpath"
 
         # Check if backup file exists
         if [[ ! -f "$bkpfile" ]]; then
           error "File missing in backup: $relpath"
-          ((errors++))
+          ((errors+=1))
           continue
         fi
 
@@ -653,7 +712,7 @@ verify_backup() {
 
         if [[ "$src_size" != "$bkp_size" ]]; then
           error "Size mismatch for file: $relpath (source: $src_size bytes, backup: $bkp_size bytes)"
-          ((errors++))
+          ((errors+=1))
           continue
         fi
 
@@ -665,9 +724,9 @@ verify_backup() {
 
         if [[ -z "$src_checksum" || -z "$bkp_checksum" || "$src_checksum" != "$bkp_checksum" ]]; then
           error "Checksum mismatch for file: $relpath"
-          ((errors++))
+          ((errors+=1))
         else
-          ((files_matched++))
+          ((files_matched+=1))
           ((debug)) && echo "Verified: $relpath"
         fi
 
@@ -687,7 +746,7 @@ verify_backup() {
 
         if [[ ! -f "$srcfile" ]]; then
           error "Extra file in backup: $relpath"
-          ((errors++))
+          ((errors+=1))
         fi
       done < <(find "$backup_dir" -type f -print)
     fi
@@ -717,7 +776,7 @@ compare_files() {
   local -a file_patterns=("${@:3}")
   local diff_tool
   local -a diff_opts
-  local diff_name="diff"
+  local diff_name='diff'
 
   # Ensure source and checkpoint directories exist
   if [[ ! -d "$source_dir" ]]; then
@@ -733,17 +792,17 @@ compare_files() {
   # Find the best diff tool available
   if command -v delta &>/dev/null && [ -t 1 ]; then
     # Use delta if available (superior diff visualization)
-    diff_tool="delta"
+    diff_tool='delta'
     diff_opts=("--features" "side-by-side")
-    diff_name="delta"
+    diff_name='delta'
   elif command -v colordiff &>/dev/null && [ -t 1 ]; then
     # Use colordiff if available
-    diff_tool="colordiff"
+    diff_tool='colordiff'
     diff_opts=("-u")  # unified format
-    diff_name="colordiff"
+    diff_name='colordiff'
   elif command -v diff &>/dev/null; then
     # Fall back to standard diff
-    diff_tool="diff"
+    diff_tool='diff'
     diff_opts=("-u")  # unified format
   else
     error "No diff tool available"
@@ -789,17 +848,17 @@ compare_files() {
         if [[ -f "$source_file" ]]; then
           # Both files exist, check if they're identical
           if cmp -s "$source_file" "$checkpoint_file"; then
-            ((identical_files++))
+            ((identical_files+=1))
             ((verbose)) && echo "${GREEN}Identical file:${NOCOLOR} $rel_path"
           else
-            ((different_files++))
+            ((different_files+=1))
             echo "${BOLD}${YELLOW}File differs:${NOCOLOR} $rel_path"
             echo "${BOLD}---------------------------------------------------${NOCOLOR}"
             "$diff_tool" "${diff_opts[@]}" "$source_file" "$checkpoint_file" || true
             echo ""
           fi
         else
-          ((checkpoint_only_files++))
+          ((checkpoint_only_files+=1))
           echo "${RED}File exists only in checkpoint:${NOCOLOR} $rel_path"
           echo ""
         fi
@@ -813,7 +872,7 @@ compare_files() {
         checkpoint_file="$checkpoint_dir/$rel_path"
 
         if [[ ! -f "$checkpoint_file" ]]; then
-          ((source_only_files++))
+          ((source_only_files+=1))
           echo "${GREEN}File exists only in source:${NOCOLOR} $rel_path"
           echo ""
         fi
@@ -843,17 +902,17 @@ compare_files() {
       if [[ -f "$source_file" ]]; then
         # Both files exist, compare them
         if cmp -s "$source_file" "$checkpoint_file"; then
-          ((identical_files++))
+          ((identical_files+=1))
           ((verbose > 1)) && echo "${GREEN}Identical file:${NOCOLOR} $rel_path"
         else
-          ((different_files++))
+          ((different_files+=1))
           echo "${BOLD}${YELLOW}File differs:${NOCOLOR} $rel_path"
           echo "${BOLD}---------------------------------------------------${NOCOLOR}"
           "$diff_tool" "${diff_opts[@]}" "$source_file" "$checkpoint_file" || true
           echo ""
         fi
       else
-        ((checkpoint_only_files++))
+        ((checkpoint_only_files+=1))
         echo "${RED}File exists only in checkpoint:${NOCOLOR} $rel_path"
         echo ""
       fi
@@ -877,7 +936,7 @@ compare_files() {
       checkpoint_file="$checkpoint_dir/$rel_path"
 
       if [[ ! -f "$checkpoint_file" ]]; then
-        ((source_only_files++))
+        ((source_only_files+=1))
         echo "${GREEN}File exists only in source:${NOCOLOR} $rel_path"
         echo ""
       fi
@@ -910,22 +969,22 @@ compare_checkpoints() {
   local -a file_patterns=("${@:4}")
   local diff_tool
   local -a diff_opts
-  local diff_name="diff"
+  local diff_name='diff'
 
   # Find the best diff tool available
   if command -v delta &>/dev/null && [ -t 1 ]; then
     # Use delta if available (superior diff visualization)
-    diff_tool="delta"
+    diff_tool='delta'
     diff_opts=("--features" "side-by-side")
-    diff_name="delta"
+    diff_name='delta'
   elif command -v colordiff &>/dev/null && [ -t 1 ]; then
     # Use colordiff if available
-    diff_tool="colordiff"
+    diff_tool='colordiff'
     diff_opts=("-u")  # unified format
-    diff_name="colordiff"
+    diff_name='colordiff'
   elif command -v diff &>/dev/null; then
     # Fall back to standard diff
-    diff_tool="diff"
+    diff_tool='diff'
     diff_opts=("-u")  # unified format
   else
     error "No diff tool available"
@@ -962,17 +1021,17 @@ compare_checkpoints() {
         if [[ -f "$second_file" ]]; then
           # Both files exist, check if they're identical
           if cmp -s "$first_file" "$second_file"; then
-            ((identical_files++))
+            ((identical_files+=1))
             ((verbose)) && echo "${GREEN}Identical file:${NOCOLOR} $rel_path"
           else
-            ((different_files++))
+            ((different_files+=1))
             echo "${BOLD}${YELLOW}File differs:${NOCOLOR} $rel_path"
             echo "${BOLD}---------------------------------------------------${NOCOLOR}"
             "$diff_tool" "${diff_opts[@]}" "$first_file" "$second_file" || true
             echo ""
           fi
         else
-          ((first_only_files++))
+          ((first_only_files+=1))
           echo "${YELLOW}File exists only in first checkpoint:${NOCOLOR} $rel_path"
           echo ""
         fi
@@ -986,7 +1045,7 @@ compare_checkpoints() {
         first_file="$first_checkpoint/$rel_path"
 
         if [[ ! -f "$first_file" ]]; then
-          ((second_only_files++))
+          ((second_only_files+=1))
           echo "${CYAN}File exists only in second checkpoint:${NOCOLOR} $rel_path"
           echo ""
         fi
@@ -1016,10 +1075,10 @@ compare_checkpoints() {
       if [[ -f "$second_file" ]]; then
         # Both files exist, compare them
         if cmp -s "$first_file" "$second_file"; then
-          ((identical_files++))
+          ((identical_files+=1))
           ((verbose > 1 || detailed)) && echo "${GREEN}Identical file:${NOCOLOR} $rel_path"
         else
-          ((different_files++))
+          ((different_files+=1))
           echo "${BOLD}${YELLOW}File differs:${NOCOLOR} $rel_path"
           if ((detailed)); then
             echo "${BOLD}---------------------------------------------------${NOCOLOR}"
@@ -1028,7 +1087,7 @@ compare_checkpoints() {
           fi
         fi
       else
-        ((first_only_files++))
+        ((first_only_files+=1))
         echo "${YELLOW}File exists only in first checkpoint:${NOCOLOR} $rel_path"
         echo ""
       fi
@@ -1052,7 +1111,7 @@ compare_checkpoints() {
       first_file="$first_checkpoint/$rel_path"
 
       if [[ ! -f "$first_file" ]]; then
-        ((second_only_files++))
+        ((second_only_files+=1))
         echo "${CYAN}File exists only in second checkpoint:${NOCOLOR} $rel_path"
         echo ""
       fi
@@ -1250,7 +1309,8 @@ restore_backup() {
       echo "Restoration completed successfully"
 
       # Count restored files
-      local file_count=$(find "$target_dir" -type f | wc -l)
+      local -i file_count
+      file_count=$(find "$target_dir" -type f | wc -l)
       echo "Restored $file_count files"
     fi
   else
@@ -1431,7 +1491,7 @@ find_by_metadata() {
     # Check if pattern matches
     if grep -q "$pattern" "$metadata_file"; then
       echo "Match found: $(basename "$checkpoint_dir")"
-      ((found++))
+      ((found+=1))
 
       # Show basic metadata
       echo "  Created: $(stat -c %y "$checkpoint_dir" 2>/dev/null || stat -f "%Sm" "$checkpoint_dir")"
@@ -1476,7 +1536,8 @@ prune_backups() {
   fi
 
   # Count existing backups
-  local total_backups=$(find "$backup_dir" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN" | wc -l)
+  local -i total_backups
+  total_backups=$(find "$backup_dir" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN" | wc -l)
 
   if ((total_backups == 0)); then
     ((verbose)) && echo "No backups found in '$backup_dir'."
@@ -1498,7 +1559,7 @@ prune_backups() {
       mapfile -t old_backups < <(find "$backup_dir" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN" | sort)
 
       # Remove the oldest backups up to the limit
-      for ((i=0; i<backups_to_remove; i++)); do
+      for ((i=0; i<backups_to_remove; i+=1)); do
         if [[ -d "${old_backups[$i]}" ]]; then
           ((verbose)) && echo "Removing backup: $(basename "${old_backups[$i]}")"
           rm -rf "${old_backups[$i]}" || { error "Failed to remove backup '${old_backups[$i]}'"; return 1; }
@@ -1515,13 +1576,15 @@ prune_backups() {
     ((verbose)) && echo "Pruning backups by age, keeping backups newer than $age_days days."
 
     # Get current timestamp
-    local current_time=$(date +%s)
+    local -i current_time
+    current_time=$(date +%s)
     local cutoff_time=$((current_time - (age_days * 86400)))  # 86400 seconds per day
 
     # Find and remove backups older than the specified age
     while IFS= read -r backup; do
       # Extract timestamp from directory name
-      local backup_name=$(basename "$backup")
+      local -- backup_name
+      backup_name=$(basename "$backup")
       # Convert YYYYMMDD_HHMMSS format to timestamp
       local backup_date=${backup_name:0:8}  # YYYYMMDD
       local backup_time=${backup_name:9:6}  # HHMMSS
@@ -1572,12 +1635,12 @@ main() {
                   suffix="$1"
                   # Sanitize suffix for security
                   suffix=$(echo "$suffix" | tr -cd '[:alnum:]._-')
-                  [[ -n $suffix ]] && suffix=_"$suffix"
+                  [[ -n "$suffix" ]] && suffix=_"$suffix"
                   ;;
     -n|--nohardlink)
                   hardlink=0 ;;
        --hardlink)
-                  [[ -z $HARDLINK ]] && die 1 "'hardlink' is not installed."
+                  [[ -z "$HARDLINK" ]] && die 1 "'hardlink' is not installed."
                   hardlink=1 ;;
     -q|--quiet)   verbose=0 ;;
     -v|--verbose) verbose=1 ;;
@@ -1672,19 +1735,20 @@ main() {
        --force-unlock)
                   force_unlock=1 ;;
     -V|--version) echo "$PRG $VERSION"; exit 0 ;;
-    -h|--help)    usage ;;
+    -h|--help)    usage 0 ;;
     -[dsnqvlrftxkphV]*) #shellcheck disable=SC2046 #split up single options
                   set -- '' $(printf -- "-%c " $(grep -o . <<<"${1:1}")) "${@:2}";;
     -*)           die 22 "Invalid option '$1'" ;;
-    *)            [[ -n $source_dir ]] && die 1 "Source dir '$source_dir' has already been defined!"
+    *)            [[ -n "$source_dir" ]] && die 1 "Source dir '$source_dir' has already been defined!"
                   source_dir="$1"
                   ;;
   esac; shift; done
 
   # Calculate timestamp at backup time, not script start time
-  declare datestamp=$(isodate)
+  declare -- datestamp
+  datestamp=$(isodate)
 
-  [[ -z $source_dir ]] && source_dir="$PWD"
+  [[ -z "$source_dir" ]] && source_dir="$PWD"
   # Handle path portably using a single canonical path resolution function
   source_dir=$(get_canonical_path "$source_dir")
   [[ -d "$source_dir" ]] || die 1 "No such directory '$source_dir'"
@@ -2159,7 +2223,8 @@ remote_create_backup() {
     
     # Try to create remote lock directory
     local lock_acquired=0
-    local start_time=$(date +%s)
+    local -i start_time
+    start_time=$(date +%s)
     local current_time
     local elapsed_time
     

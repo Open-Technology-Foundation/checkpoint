@@ -411,11 +411,34 @@ This project is licensed under the GPL-3.0 License - see the [LICENSE](LICENSE) 
 
 ## Version
 
-Current version: **1.5.0**
+Current version: **1.6.0**
 
 ### Recent Features
-- **v1.5.0**: Atomic backup operations with temporary directories
-- **v1.4.0**: Lockfile mechanism for concurrency protection
-- **v1.3.0**: Enhanced metadata management and remote operations
 
-For version history and changes, see the commit log or check `checkpoint --version`.
+#### v1.6.0 - Code Quality and Standards Compliance
+- **Full BASH-CODING-STYLE.md compliance**: Refactored entire codebase to meet strict coding standards
+- **Enhanced messaging system**: New standardized output functions with visual indicators (✓ for success, ✗ for errors)
+- **Improved variable handling**: Proper type declarations for all variables (integers, arrays, strings)
+- **Better error handling**: Consistent error codes and messaging throughout
+- **Verification improvements**: Fixed file exclusion handling during backup verification
+- **Code modernization**: Updated arithmetic operations, fixed shellcheck warnings, improved quoting
+
+#### v1.5.0 - Atomic Operations
+- Implemented atomic backup operations using temporary directories
+- Added automatic cleanup of interrupted operations
+- Ensured backup integrity with atomic rename after completion
+- Applied atomic pattern to both local and remote operations
+
+#### v1.4.0 - Concurrency Protection
+- Added lockfile mechanism to prevent concurrent operations
+- Implemented PID-based lock ownership verification
+- Added stale lock detection and automatic cleanup
+- Introduced --no-lock, --lock-timeout, and --force-unlock options
+- Extended locking to remote operations via SSH
+
+#### v1.3.0 - Enhanced Metadata and Remote Operations
+- Improved metadata management system
+- Enhanced remote operation capabilities
+- Added comprehensive remote testing framework
+
+For detailed version history, see the commit log or check `checkpoint --version`.
