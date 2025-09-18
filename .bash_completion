@@ -1,0 +1,67 @@
+#!/bin/bash
+# Bash completion for checkpoint and chkpoint commands
+
+_checkpoint_completion() {
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    # Main options
+    opts="--backup-dir --suffix --no-hardlink --hardlink --quiet --verbose --list --exclude --no-sudo --debug --verify --metadata --show --update --find --desc --system --tag --set --remote --timeout --keep --age --prune-only --no-lock --lock-timeout --force-unlock --version --help --restore --from --to --dry-run --diff --compare-with --detailed --files"
+
+    # Short options
+    short_opts="-d -s -n -q -v -l -x -r -f -t -k -p -V -h"
+
+    case $prev in
+        --backup-dir|-d|--to|-t)
+            # Directory completion
+            COMPREPLY=($(compgen -d -- "$cur"))
+            return 0
+            ;;
+        --suffix|-s|--desc|--system)
+            # Text input, no completion
+            return 0
+            ;;
+        --exclude|-x|--files)
+            # File pattern completion
+            COMPREPLY=($(compgen -f -- "$cur"))
+            return 0
+            ;;
+        --from|-f|--show|--update|--compare-with)
+            # Checkpoint ID completion - would need to run checkpoint --list to get actual IDs
+            # For now, just return empty to allow manual input
+            return 0
+            ;;
+        --find)
+            # Pattern for metadata search
+            return 0
+            ;;
+        --tag|--set)
+            # Key=value pairs
+            return 0
+            ;;
+        --remote)
+            # user@host:/path format
+            return 0
+            ;;
+        --timeout|--keep|--age|--lock-timeout)
+            # Numeric values
+            return 0
+            ;;
+    esac
+
+    # Complete with available options
+    if [[ $cur == -* ]]; then
+        COMPREPLY=($(compgen -W "$opts $short_opts" -- "$cur"))
+    else
+        # Directory completion for source directory argument
+        COMPREPLY=($(compgen -d -- "$cur"))
+    fi
+
+    return 0
+}
+
+# Register completion for both checkpoint and chkpoint commands
+complete -F _checkpoint_completion checkpoint
+complete -F _checkpoint_completion chkpoint
