@@ -229,8 +229,8 @@ EOF
   [ -f "$backup_dir/.metadata" ]
   
   # Verify metadata content
-  grep -q "description=Test backup" "$backup_dir/.metadata"
-  grep -q "system=testsys" "$backup_dir/.metadata"
+  grep -q "DESCRIPTION=Test backup" "$backup_dir/.metadata"
+  grep -q "SYSTEM=testsys" "$backup_dir/.metadata"
   grep -q "env=test" "$backup_dir/.metadata"
   
   # No temp directories remain
