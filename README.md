@@ -469,7 +469,7 @@ Current version: **1.6.0**
 ### Recent Features
 
 #### v1.6.0 - Code Quality and Standards Compliance
-- **Full BASH-CODING-STYLE.md compliance**: Refactored entire codebase to meet strict coding standards
+- **Full BASH-CODING-STANDARD.md compliance**: Refactored entire codebase to meet strict coding standards
 - **Enhanced messaging system**: New standardized output functions with visual indicators (✓ for success, ✗ for errors)
 - **Improved variable handling**: Proper type declarations for all variables (integers, arrays, strings)
 - **Better error handling**: Consistent error codes and messaging throughout
