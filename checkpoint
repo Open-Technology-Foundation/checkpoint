@@ -43,7 +43,7 @@ _msg() {
   local -- status="${FUNCNAME[1]}" prefix="$PRG:" msg
   case "$status" in
     success) prefix+=" ${GREEN}✓${NC}" ;;
-    warn)    prefix+=" ${YELLOW}⚡${NC}" ;;
+    warn)    prefix+=" ${YELLOW}▲${NC}" ;;
     info)    prefix+=" ${CYAN}◉${NC}" ;;
     error)   prefix+=" ${RED}✗${NC}" ;;
     *)       ;;

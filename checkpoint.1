@@ -1,0 +1,344 @@
+.TH CHECKPOINT 1 "January 2025" "Version 1.6.0" "User Commands"
+.SH NAME
+checkpoint \- create, manage, and restore timestamped snapshots of directories
+.SH SYNOPSIS
+.B checkpoint
+[\fIOPTIONS\fR]
+[\fIDIRECTORY\fR]
+.br
+.B checkpoint
+\fB\-\-restore\fR [\fB\-\-from\fR \fIID\fR] [\fB\-\-to\fR \fIDIR\fR] [\fIOPTIONS\fR]
+.br
+.B checkpoint
+\fB\-\-list\fR [\fB\-d\fR \fIDIR\fR]
+.br
+.B checkpoint
+\fB\-\-compare\-with\fR \fIID\fR [\fB\-\-from\fR \fIID\fR] [\fIOPTIONS\fR]
+.br
+.B checkpoint
+\fB\-\-remote\fR \fIUSER@HOST:/PATH\fR [\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B checkpoint
+is a powerful cross-platform utility for creating, managing, and restoring timestamped snapshots of directories. 
+Designed specifically for developers, system administrators, and DevOps engineers who need reliable recovery points during iterative development and system configuration changes.
+.PP
+Checkpoint bridges the gap between informal backup practices and enterprise-grade snapshot management by providing simple commands for complex operations. 
+Create recovery points before risky changes, track development progress through organized snapshots, and quickly restore when needed—all while maintaining security and automation compatibility.
+.PP
+The utility provides smart snapshots with automatic exclusions, atomic operations for backup integrity, concurrency protection through lockfile mechanisms, 
+and powerful comparison tools to visualize differences between snapshots. It supports both local and remote operations via SSH, 
+uses hardlinking for space efficiency, and includes comprehensive metadata management.
+.SH OPTIONS
+.SS Core Options
+.TP
+.BR \-d ", " \-\-backup\-dir " " \fIDIR\fR
+Custom backup location (default: /var/backups/DIR_NAME for root, ~/.checkpoint/DIR_NAME for regular users)
+.TP
+.BR \-s ", " \-\-suffix " " \fISUFFIX\fR
+Add descriptive suffix to checkpoint name
+.TP
+.BR \-q ", " \-\-quiet
+Minimal output (just backup path)
+.TP
+.BR \-v ", " \-\-verbose
+Detailed output with progress (default)
+.TP
+.BR \-l ", " \-\-list
+List existing checkpoints with sizes
+.TP
+.BR \-h ", " \-\-help
+Show help message and exit
+.TP
+.B \-\-version
+Display version information
+.TP
+.B \-\-debug
+Enable debug mode for troubleshooting
+.SS Backup Management
+.TP
+.BR \-\-keep " " \fIN\fR
+Keep only N most recent backups
+.TP
+.BR \-\-age " " \fIDAYS\fR
+Remove backups older than DAYS days
+.TP
+.BR \-\-exclude " " \fIPATTERN\fR
+Additional exclusion pattern (repeatable)
+.TP
+.B \-\-verify
+Verify backup integrity after creation
+.TP
+.B \-\-no\-sudo
+Never attempt privilege escalation
+.TP
+.B \-\-hardlink
+Enable hardlinking for space efficiency
+.TP
+.B \-\-prune\-only
+Remove old backups without creating new one
+.TP
+.B \-\-no\-lock
+Disable lockfile mechanism (use with caution)
+.TP
+.BR \-\-lock\-timeout " " \fIN\fR
+Lock acquisition timeout in seconds (default: 300)
+.TP
+.B \-\-force\-unlock
+Force removal of stale locks
+.SS Restore and Compare
+.TP
+.B \-\-restore
+Restore from checkpoint
+.TP
+.BR \-\-from " " \fIID\fR
+Source checkpoint (defaults to most recent)
+.TP
+.BR \-\-to " " \fIDIR\fR
+Target restore directory (defaults to original)
+.TP
+.B \-\-dry\-run
+Preview changes without making them
+.TP
+.B \-\-diff
+Show differences before restoring
+.TP
+.BR \-\-compare\-with " " \fIID\fR
+Compare two checkpoints
+.TP
+.B \-\-detailed
+Show file content differences in comparison
+.TP
+.BR \-\-files " " \fIPATTERN\fR
+Select specific files/patterns (repeatable)
+.SS Metadata and Remote
+.TP
+.BR \-\-desc " " \fITEXT\fR
+Add description to checkpoint
+.TP
+.BR \-\-tag " " \fIKEY=VALUE\fR
+Add searchable metadata tag (repeatable)
+.TP
+.B \-\-metadata
+Access checkpoint metadata
+.TP
+.BR \-\-show " " \fIID\fR
+Show metadata for specific checkpoint
+.TP
+.BR \-\-update " " \fIID\fR
+Update checkpoint metadata
+.TP
+.BR \-\-find " " \fIPATTERN\fR
+Search for checkpoints matching pattern
+.TP
+.BR \-\-remote " " \fISPEC\fR
+Remote location (user@host:/path)
+.TP
+.BR \-\-timeout " " \fISECONDS\fR
+SSH connection timeout (default: 30s)
+.SH EXAMPLES
+.SS Basic Usage
+.PP
+Create checkpoint of current directory:
+.RS
+.B checkpoint
+.RE
+.PP
+Create checkpoint with descriptive name:
+.RS
+.B checkpoint -s "before-refactor"
+.RE
+.PP
+List all checkpoints:
+.RS
+.B checkpoint --list
+.RE
+.PP
+Restore latest checkpoint:
+.RS
+.B checkpoint --restore
+.RE
+.SS Development Workflow
+.PP
+Create checkpoint before major changes:
+.RS
+.B checkpoint -s "pre-api-refactor" --desc "Stable baseline before API changes"
+.RE
+.PP
+Create checkpoint with metadata:
+.RS
+.B checkpoint --desc "Release candidate v2.1.0" --tag "version=2.1.0" --tag "status=testing"
+.RE
+.PP
+Compare with previous state:
+.RS
+.B checkpoint --restore --diff
+.RE
+.PP
+Restore specific checkpoint:
+.RS
+.B checkpoint --restore --from 20250430_091429
+.RE
+.SS System Administration
+.PP
+Backup configuration before updates:
+.RS
+.B sudo checkpoint -d /var/backups/system /etc
+.RE
+.PP
+Web server configuration checkpoint:
+.RS
+.B checkpoint -s "ssl-optimization" /etc/nginx
+.RE
+.PP
+Compare configuration changes:
+.RS
+.B checkpoint --from 20250430_091429 --compare-with 20250430_101530 --detailed
+.RE
+.SS Remote Operations
+.PP
+Create backup on remote server:
+.RS
+.B checkpoint --remote user@host:/path/to/backups
+.RE
+.PP
+List remote checkpoints:
+.RS
+.B checkpoint --remote user@host:/path/to/backups --list
+.RE
+.PP
+Restore from remote checkpoint:
+.RS
+.B checkpoint --remote user@host:/path/to/backups --restore --from 20250430_091429
+.RE
+.SS Backup Management
+.PP
+Keep only 5 most recent backups:
+.RS
+.B checkpoint --keep 5
+.RE
+.PP
+Remove backups older than 30 days:
+.RS
+.B checkpoint --age 30
+.RE
+.PP
+Prune without creating new backup:
+.RS
+.B checkpoint --prune-only --keep 3
+.RE
+.PP
+Verify backup integrity:
+.RS
+.B checkpoint --verify
+.RE
+.SH FILES
+.TP
+.I ~/.checkpoint/
+Default backup directory for regular users
+.TP
+.I /var/backups/
+Default backup directory for root/sudo users
+.TP
+.I .gudang/
+Contains previous backup data (excluded by default)
+.TP
+.I .checkpoint.lock/
+Lock directory for concurrency protection
+.TP
+.I .tmp.*
+Temporary backup directories during atomic operations
+.SH ENVIRONMENT
+.TP
+.B CHECKPOINT_BACKUP_DIR
+Set default backup directory for all operations. Takes precedence over built-in defaults.
+.TP
+.B CHECKPOINT_AUTO_CONFIRM
+Skip interactive prompts when set to 1. Useful for automation and scripting.
+.SH EXIT STATUS
+.TP
+.B 0
+Success
+.TP
+.B 1
+General error or operation failure
+.TP
+.B 2
+Invalid arguments or parameters
+.TP
+.B 3
+Permission denied or insufficient privileges
+.TP
+.B 4
+Lock acquisition failure or timeout
+.TP
+.B 5
+Remote operation failure
+.SH DIAGNOSTICS
+The checkpoint utility provides detailed error messages to help diagnose issues:
+.PP
+.B "Permission Denied"
+- Use --no-sudo for user-accessible directories or ensure sudo access
+.PP
+.B "SSH Connection Failed"
+- Verify SSH key setup and network connectivity for remote operations
+.PP
+.B "Insufficient Disk Space"
+- Check available space in backup directory before large operations
+.PP
+.B "Command Not Found"
+- Ensure all required dependencies (rsync, find, stat) are installed
+.PP
+Enable debug output with:
+.RS
+.B checkpoint --debug
+.RE
+.SH NOTES
+.SS Default Exclusions
+The following patterns are automatically excluded from all backups:
+.IP \(bu 2
+Backup directory itself (prevents recursion)
+.IP \(bu 2
+.gudang/, temp/, .temp/, tmp/ directories
+.IP \(bu 2
+Temporary files: *~ and ~*
+.IP \(bu 2
+.tmp.* (temporary backup directories)
+.IP \(bu 2
+.checkpoint.lock/ (lock directories)
+.SS Atomic Operations
+Checkpoint uses atomic operations to ensure backup integrity:
+.IP \(bu 2
+Backups are created in a temporary directory first
+.IP \(bu 2
+Only after all operations succeed is the backup renamed to its final name
+.IP \(bu 2
+Temporary directories are automatically cleaned up on interruption or failure
+.IP \(bu 2
+No partial states or corrupted backups can occur
+.SS Concurrency Protection
+A lockfile mechanism prevents data corruption from concurrent operations:
+.IP \(bu 2
+Prevents multiple checkpoint instances from operating on the same backup directory
+.IP \(bu 2
+Automatically detects and removes stale locks from crashed processes
+.IP \(bu 2
+Works with both local and remote operations
+.IP \(bu 2
+Can be disabled with --no-lock for special use cases (use with caution)
+.SH SEE ALSO
+.BR rsync (1),
+.BR find (1),
+.BR stat (1),
+.BR ssh (1),
+.BR hardlink (1)
+.PP
+Project repository: https://github.com/Open-Technology-Foundation/checkpoint
+.SH BUGS
+Report bugs at: https://github.com/Open-Technology-Foundation/checkpoint/issues
+.SH AUTHOR
+Written by the Open Technology Foundation development team.
+.SH COPYRIGHT
+Copyright (C) 2025 Open Technology Foundation. License GPLv3+: GNU GPL version 3 or later.
+.br
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
