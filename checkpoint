@@ -15,12 +15,9 @@ declare -- HARDLINK
 HARDLINK=$(command -v hardlink || echo '')
 
 # Script identification using standard pattern
-declare -- PRG0
-PRG0=$(readlink -en -- "$0" 2>/dev/null || realpath -- "$0" 2>/dev/null || echo "$0")
-PRG=${PRG0##*/}
-PRGDIR=${PRG0%/*}
-#shellcheck disable=SC2034
-readonly -- VERSION PRG0 PRG PRGDIR
+#shellcheck disable=SC2155
+declare -r SCRIPT_PATH=$(realpath -e "$0" 2>/dev/null || echo "$0")
+declare -r SCRIPT_NAME=${SCRIPT_PATH##*/} #SCRIPT_DIR=${SCRIPT_PATH%/*}
 
 # CROSS-PLATFORM HELPER FUNCTIONS
 
@@ -40,7 +37,7 @@ declare -i verbose=1
 # Standard Messaging Functions
 # Core message function using FUNCNAME for context
 _msg() {
-  local -- status="${FUNCNAME[1]}" prefix="$PRG:" msg
+  local -- status="${FUNCNAME[1]}" prefix="$SCRIPT_NAME:" msg
   case "$status" in
     success) prefix+=" ${GREEN}✓${NC}" ;;
     warn)    prefix+=" ${YELLOW}▲${NC}" ;;
@@ -62,19 +59,22 @@ die() { (($# > 1)) && error "${@:2}"; exit "${1:-0}"; }
 # Utility Functions
 # Display declared variables
 decp() { declare -p "$@" | sed 's/^declare -[a-zA-Z-]* //'; }
+
 # Trim whitespace
 trim() {
   local v="$*"
   v="${v#"${v%%[![:blank:]]*}"}"
   echo -n "${v%"${v##*[![:blank:]]}"}"
 }
+
 # Pluralization helper
 s() { (( ${1:-1} == 1 )) || echo -n 's'; }
+
 # yes/no prompt
 yn() {
   ((verbose)) || return 0
   local -- reply
-  read -r -n1 -p "$PRG: ${YELLOW}$1${NC} y/n " reply
+  read -r -n1 -p "$SCRIPT_NAME: ${YELLOW}$1${NC} y/n " reply
   echo
   [[ ${reply,,} == y ]]
 }
@@ -315,7 +315,7 @@ declare -- temp_backup_dir='' # Temporary directory for atomic backup operations
 # Display help and usage information
 usage() {
   cat <<EOT
-$PRG $VERSION - create and restore checkpoint backups
+$SCRIPT_NAME $VERSION - create and restore checkpoint backups
 
 Creates timestamped backup snapshots of a directory.
 
@@ -337,9 +337,9 @@ To enable hardlinking (for space efficiency), install hardlink:
     apt install hardlink
 
 Usage:
-  $PRG [OPTIONS] [directory]                   # Create checkpoint
-  $PRG --list [OPTIONS] [directory]            # List checkpoints
-  $PRG --restore [RESTORE_OPTIONS] [directory] # Restore from checkpoint
+  $SCRIPT_NAME [OPTIONS] [directory]                   # Create checkpoint
+  $SCRIPT_NAME --list [OPTIONS] [directory]            # List checkpoints
+  $SCRIPT_NAME --restore [RESTORE_OPTIONS] [directory] # Restore from checkpoint
 
 Options:
   -d, --backup-dir DIR  Backup directory for checkpoints
@@ -392,65 +392,65 @@ Restore Options:
 
 Examples:
   # Create checkpoint of current directory (uses smart defaults)
-  $PRG
+  $SCRIPT_NAME
 
   # Non-root user: backup to home directory
-  $PRG ~/myproject  # Backs up to ~/.checkpoint/myproject/
+  $SCRIPT_NAME ~/myproject  # Backs up to ~/.checkpoint/myproject/
 
   # Specify custom backup directory
-  $PRG -d ~/backups/myproject ~/myscript
+  $SCRIPT_NAME -d ~/backups/myproject ~/myscript
 
   # Use environment variable for default location
   export CHECKPOINT_BACKUP_DIR=~/my-backups
-  $PRG ~/myproject  # Backs up to ~/my-backups/myproject/
+  $SCRIPT_NAME ~/myproject  # Backs up to ~/my-backups/myproject/
 
   # Create checkpoint with descriptive suffix
-  $PRG -s "before-api-refactor"
+  $SCRIPT_NAME -s "before-api-refactor"
 
   # Prevent sudo escalation for system directories
-  $PRG --no-sudo ~/myproject
+  $SCRIPT_NAME --no-sudo ~/myproject
   
   # List existing checkpoints
-  $PRG --list
+  $SCRIPT_NAME --list
 
   # Restore the latest checkpoint
-  $PRG --restore
+  $SCRIPT_NAME --restore
 
   # Restore a specific checkpoint (by timestamp/ID)
-  $PRG --restore --from 20250430_091429
+  $SCRIPT_NAME --restore --from 20250430_091429
 
   # Restore to a different directory
-  $PRG --restore --from 20250430_091429 --to ~/restored-project
+  $SCRIPT_NAME --restore --from 20250430_091429 --to ~/restored-project
 
   # Preview restoration (dry run)
-  $PRG --restore --dry-run
+  $SCRIPT_NAME --restore --dry-run
 
   # Restore only specific files
-  $PRG --restore --files "*.js" --files "docs/*.md"
+  $SCRIPT_NAME --restore --files "*.js" --files "docs/*.md"
 
   # Compare current files with checkpoint before restoration
-  $PRG --restore --diff
+  $SCRIPT_NAME --restore --diff
 
   # Compare specific files between current directory and checkpoint
-  $PRG --restore --diff --files "*.js"
+  $SCRIPT_NAME --restore --diff --files "*.js"
 
   # Compare two checkpoints with each other
-  $PRG --from 20250430_091429 --compare-with 20250430_101530
+  $SCRIPT_NAME --from 20250430_091429 --compare-with 20250430_101530
 
   # Compare two checkpoints with detailed differences
-  $PRG --from 20250430_091429 --compare-with 20250430_101530 --detailed
+  $SCRIPT_NAME --from 20250430_091429 --compare-with 20250430_101530 --detailed
 
   # Compare specific files between two checkpoints
-  $PRG --from 20250430_091429 --compare-with 20250430_101530 --files "*.js" --files "*.html"
+  $SCRIPT_NAME --from 20250430_091429 --compare-with 20250430_101530 --files "*.js" --files "*.html"
 
   # Create checkpoint and keep only the 5 most recent backups
-  $PRG --keep 5
+  $SCRIPT_NAME --keep 5
 
   # Create checkpoint and remove backups older than 30 days
-  $PRG --age 30
+  $SCRIPT_NAME --age 30
 
   # Prune backups without creating a new one
-  $PRG --prune-only --keep 3
+  $SCRIPT_NAME --prune-only --keep 3
 
 Environment Variables:
   CHECKPOINT_BACKUP_DIR   Default backup directory for all operations
@@ -1897,7 +1897,7 @@ main() {
                   ;;
        --force-unlock)
                   force_unlock=1 ;;
-    -V|--version) echo "$PRG $VERSION"; exit 0 ;;
+    -V|--version) echo "$SCRIPT_NAME $VERSION"; exit 0 ;;
     -h|--help)    usage 0 ;;
     -[dsnqvlrftxkphV]*) #shellcheck disable=SC2046 #split up single options
                   set -- '' $(printf -- "-%c " $(grep -o . <<<"${1:1}")) "${@:2}";;
