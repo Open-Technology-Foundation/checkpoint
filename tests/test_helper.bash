@@ -25,3 +25,4 @@ teardown_test_directory() {
 # Export variables and functions
 export SCRIPT_DIR
 export SCRIPT_PATH
+#fin

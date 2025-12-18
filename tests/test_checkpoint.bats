@@ -1084,3 +1084,4 @@ EOT
   [[ ! "$output" =~ "app.log" ]]
   [[ ! "$output" =~ "config.ini" ]]
 }
+#fin

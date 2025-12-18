@@ -1225,7 +1225,7 @@ compare_checkpoints() {
       # Skip files in excluded directories
       local should_skip=0
       for pattern in "/.gudang/" "/tmp/" "/.temp/" "/temp/" "*~" "~*"; do
-        if [[ "$rel_path" == "$pattern" ]]; then
+        if [[ "$rel_path" == *"$pattern"* ]]; then
           should_skip=1
           break
         fi
@@ -1263,7 +1263,7 @@ compare_checkpoints() {
       # Skip files in excluded directories
       local should_skip=0
       for pattern in "/.gudang/" "/tmp/" "/.temp/" "/temp/" "*~" "~*"; do
-        if [[ "$rel_path" == "$pattern" ]]; then
+        if [[ "$rel_path" == *"$pattern"* ]]; then
           should_skip=1
           break
         fi
@@ -1299,7 +1299,7 @@ compare_checkpoints() {
       # Skip files in excluded directories
       local should_skip=0
       for pattern in "/.gudang/" "/tmp/" "/.temp/" "/temp/" "*~" "~*"; do
-        if [[ "$rel_path" == "$pattern" ]]; then
+        if [[ "$rel_path" == *"$pattern"* ]]; then
           should_skip=1
           break
         fi
@@ -2093,44 +2093,45 @@ main() {
       echo "----------------------------------------"
 
       # Initially empty total size
-      total_size="0K"
+      local -- total_size="0K"
+      local -i total_entries=0
+      local -i max_length=30  # Default minimum width
 
-      # Find and list checkpoint directories with their sizes
-      count=0
-      total_entries=0
+      # Build sorted list of checkpoints once (avoid multiple find calls)
+      local -a checkpoints=()
+      mapfile -t checkpoints < <(find "$backup_dir" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN" | sort -r)
+      total_entries=${#checkpoints[@]}
 
-      # First find the longest name to determine column width
-      max_length=30  # Default minimum width
-      while read -r checkpoint; do
+      # Find the longest name to determine column width
+      for checkpoint in "${checkpoints[@]}"; do
+        local -- dirname
         dirname=$(basename "$checkpoint")
-        len=${#dirname}
+        local -i len=${#dirname}
         (( len > max_length )) && max_length=$len
-      done < <(find "$backup_dir" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN")
+      done
 
       # Add padding
       max_length=$((max_length + 2))
 
-      # Format and display
-      find "$backup_dir" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN" | sort -r | while read -r checkpoint; do
+      # Format and display each checkpoint
+      for checkpoint in "${checkpoints[@]}"; do
+        local -- size dirname
         size=$(du -sh "$checkpoint" | cut -f1)
         dirname=$(basename "$checkpoint")
         printf "%-${max_length}s %7s\n" "$dirname" "$size"
-        count=$((count + 1))
       done
-
-      # Count entries and calculate actual total size
-      total_entries=$(find "$backup_dir" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN" | wc -l)
 
       # If no checkpoints found
       if [[ $total_entries -eq 0 ]]; then
         echo "No checkpoints found."
       else
-        # Calculate the true total size of all backups (without parent directory)
-        total_bytes=0
-        while read -r checkpoint_dir; do
+        # Calculate the true total size of all backups (using cached checkpoints array)
+        local -i total_bytes=0
+        for checkpoint_dir in "${checkpoints[@]}"; do
+          local -i dir_bytes
           dir_bytes=$(du -sk "$checkpoint_dir" | cut -f1)
           total_bytes=$((total_bytes + dir_bytes))
-        done < <(find "$backup_dir" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN")
+        done
 
         # Convert to human readable
         if [[ $total_bytes -ge 1048576 ]]; then
@@ -2309,6 +2310,21 @@ main() {
 
 # REMOTE OPERATIONS FUNCTIONS
 
+# get_ssh_opts: Get standard SSH security options array
+# Populates the global SSH_OPTS array with hardened SSH options
+# Args: None
+# Returns: 0 always
+# Globals: SSH_OPTS (populated), remote_timeout (read)
+get_ssh_opts() {
+  SSH_OPTS=(
+    -o "BatchMode=yes"
+    -o "ConnectTimeout=$remote_timeout"
+    -o "StrictHostKeyChecking=accept-new"
+    -o "IdentitiesOnly=yes"
+    -o "LogLevel=ERROR"
+  )
+}
+
 # parse_remote: Parse and validate remote specification
 # Splits user@host:/path format and validates path for security
 # Args: $1 - Remote specification in format "user@host:/path"
@@ -2344,21 +2360,15 @@ parse_remote() {
 # check_remote_connectivity: Test SSH connection to remote host
 # Uses secure SSH options for connection test
 # Returns: 0 if connection successful, 1 if not
-# Globals: remote_user, remote_host, remote_timeout
+# Globals: remote_user, remote_host, remote_timeout, SSH_OPTS
 check_remote_connectivity() {
   ((verbose)) && echo "Testing connection to ${remote_user}@${remote_host}..."
 
-  # Define SSH security options
-  local -a ssh_opts=(
-    -o "BatchMode=yes"
-    -o "ConnectTimeout=$remote_timeout"
-    -o "StrictHostKeyChecking=accept-new"
-    -o "IdentitiesOnly=yes"
-    -o "LogLevel=ERROR"
-  )
+  # Get standard SSH security options
+  get_ssh_opts
 
   # Test connection with secure options
-  if ! ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- true 2>/dev/null; then
+  if ! ssh "${SSH_OPTS[@]}" "$remote_user@$remote_host" -- true 2>/dev/null; then
     error "Cannot connect to ${remote_user}@${remote_host}. Check SSH connectivity."
     return 1
   fi
@@ -2390,14 +2400,8 @@ remote_create_backup() {
     return 1
   fi
 
-  # Define SSH security options
-  local -a ssh_opts=(
-    -o "BatchMode=yes"
-    -o "ConnectTimeout=$remote_timeout"
-    -o "StrictHostKeyChecking=accept-new"
-    -o "IdentitiesOnly=yes"
-    -o "LogLevel=ERROR"
-  )
+  # Get standard SSH security options
+  get_ssh_opts
 
   # Acquire remote lock if locking is enabled
   if ((use_locking)); then
@@ -2412,21 +2416,21 @@ remote_create_backup() {
     
     while ((lock_acquired == 0)); do
       # Try to create lock directory on remote system
-      if ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- \
+      if ssh "${SSH_OPTS[@]}" "$remote_user@$remote_host" -- \
          "mkdir '${remote_path}/.checkpoint.lock' 2>/dev/null && echo \$\$ > '${remote_path}/.checkpoint.lock/pid' && echo \$(date -u +%s) > '${remote_path}/.checkpoint.lock/timestamp' && hostname > '${remote_path}/.checkpoint.lock/hostname'"; then
         lock_acquired=1
         ((verbose)) && echo "Remote lock acquired"
       else
         # Check if lock is stale
         local remote_lock_pid
-        remote_lock_pid=$(ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "cat '${remote_path}/.checkpoint.lock/pid' 2>/dev/null" || echo "0")
+        remote_lock_pid=$(ssh "${SSH_OPTS[@]}" "$remote_user@$remote_host" -- "cat '${remote_path}/.checkpoint.lock/pid' 2>/dev/null" || echo "0")
         
         if [[ "$remote_lock_pid" != "0" ]]; then
           # Check if remote process is still running
-          if ! ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "kill -0 '$remote_lock_pid' 2>/dev/null"; then
+          if ! ssh "${SSH_OPTS[@]}" "$remote_user@$remote_host" -- "kill -0 '$remote_lock_pid' 2>/dev/null"; then
             # Process is dead, remove stale lock
             ((verbose)) && echo "Removing stale remote lock from PID $remote_lock_pid"
-            ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "rm -rf '${remote_path}/.checkpoint.lock'"
+            ssh "${SSH_OPTS[@]}" "$remote_user@$remote_host" -- "rm -rf '${remote_path}/.checkpoint.lock'"
             continue
           fi
         fi
@@ -2448,11 +2452,11 @@ remote_create_backup() {
   fi
 
   # Ensure the remote parent directory exists - use -- to separate SSH options from command
-  if ! ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- mkdir -p "${remote_path}" 2>/dev/null; then
+  if ! ssh "${SSH_OPTS[@]}" "$remote_user@$remote_host" -- mkdir -p "${remote_path}" 2>/dev/null; then
     error "Cannot create remote directory path ${remote_path}"
     # Release remote lock if we acquired it
     if ((use_locking)); then
-      ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "rm -rf '${remote_path}/.checkpoint.lock'" 2>/dev/null || true
+      ssh "${SSH_OPTS[@]}" "$remote_user@$remote_host" -- "rm -rf '${remote_path}/.checkpoint.lock'" 2>/dev/null || true
     fi
     return 1
   fi
@@ -2489,10 +2493,10 @@ remote_create_backup() {
   if ! rsync "${rsync_opts[@]}" "${exclude_args[@]}" "$source_dir/" "$remote_user@$remote_host:$remote_temp_dir"; then
     error "Failed to create remote backup"
     # Clean up remote temp directory
-    ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "rm -rf '$remote_temp_dir'" 2>/dev/null || true
+    ssh "${SSH_OPTS[@]}" "$remote_user@$remote_host" -- "rm -rf '$remote_temp_dir'" 2>/dev/null || true
     # Release remote lock if we acquired it
     if ((use_locking)); then
-      ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "rm -rf '${remote_path}/.checkpoint.lock'" 2>/dev/null || true
+      ssh "${SSH_OPTS[@]}" "$remote_user@$remote_host" -- "rm -rf '${remote_path}/.checkpoint.lock'" 2>/dev/null || true
     fi
     return 1
   fi
@@ -2500,20 +2504,20 @@ remote_create_backup() {
   # Atomically rename remote temporary directory to final name
   ((debug)) && echo "DEBUG: Atomic rename on remote: $remote_temp_dir -> $remote_backup_dir"
   
-  if ! ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "mv '$remote_temp_dir' '$remote_backup_dir'"; then
+  if ! ssh "${SSH_OPTS[@]}" "$remote_user@$remote_host" -- "mv '$remote_temp_dir' '$remote_backup_dir'"; then
     error "Failed to finalize remote backup (atomic rename failed)"
     # Clean up remote temp directory
-    ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "rm -rf '$remote_temp_dir'" 2>/dev/null || true
+    ssh "${SSH_OPTS[@]}" "$remote_user@$remote_host" -- "rm -rf '$remote_temp_dir'" 2>/dev/null || true
     # Release remote lock if we acquired it
     if ((use_locking)); then
-      ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "rm -rf '${remote_path}/.checkpoint.lock'" 2>/dev/null || true
+      ssh "${SSH_OPTS[@]}" "$remote_user@$remote_host" -- "rm -rf '${remote_path}/.checkpoint.lock'" 2>/dev/null || true
     fi
     return 1
   fi
 
   # Release remote lock after successful backup
   if ((use_locking)); then
-    ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- "rm -rf '${remote_path}/.checkpoint.lock'" 2>/dev/null || true
+    ssh "${SSH_OPTS[@]}" "$remote_user@$remote_host" -- "rm -rf '${remote_path}/.checkpoint.lock'" 2>/dev/null || true
   fi
 
   ((verbose)) && echo "Remote backup created successfully at ${remote_user}@${remote_host}:${remote_backup_dir}"
@@ -2527,7 +2531,7 @@ remote_create_backup() {
 # remote_list_backups: List checkpoint backups stored on remote host
 # Displays formatted list of remote checkpoints with their sizes
 # Returns: 0 on success, 1 on failure
-# Globals: remote_user, remote_host, remote_path, remote_timeout
+# Globals: remote_user, remote_host, remote_path, remote_timeout, SSH_OPTS
 remote_list_backups() {
   local tmp_file
 
@@ -2539,18 +2543,12 @@ remote_list_backups() {
   # Create temp file for listing
   tmp_file=$(mktemp)
 
-  # Define SSH security options
-  local -a ssh_opts=(
-    -o "BatchMode=yes"
-    -o "ConnectTimeout=$remote_timeout"
-    -o "StrictHostKeyChecking=accept-new"
-    -o "IdentitiesOnly=yes"
-    -o "LogLevel=ERROR"
-  )
+  # Get standard SSH security options
+  get_ssh_opts
 
   # List directories matching timestamp pattern using improved command structure
   # The -- separator clearly marks the end of SSH options and start of the command
-  if ! ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- \
+  if ! ssh "${SSH_OPTS[@]}" "$remote_user@$remote_host" -- \
        "ls -ld ${remote_path}/$TIMESTAMP_PATTERN 2>/dev/null || echo 'No matching directories'" > "$tmp_file"; then
     rm -f "$tmp_file"
     # If command fails but ssh succeeded, probably no backups
@@ -2632,17 +2630,11 @@ remote_restore_backup() {
   # Find checkpoint path
   remote_checkpoint_path="${remote_path}/${checkpoint_id}"
 
-  # Define SSH security options
-  local -a ssh_opts=(
-    -o "BatchMode=yes"
-    -o "ConnectTimeout=$remote_timeout"
-    -o "StrictHostKeyChecking=accept-new"
-    -o "IdentitiesOnly=yes"
-    -o "LogLevel=ERROR"
-  )
+  # Get standard SSH security options
+  get_ssh_opts
 
   # Verify remote checkpoint exists using secure command structure
-  if ! ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- test -d "${remote_checkpoint_path}" 2>/dev/null; then
+  if ! ssh "${SSH_OPTS[@]}" "$remote_user@$remote_host" -- test -d "${remote_checkpoint_path}" 2>/dev/null; then
     # Try partial match with safer command construction
     local match
     # First validate checkpoint_id for safety
@@ -2652,7 +2644,7 @@ remote_restore_backup() {
     fi
 
     # Use find instead of ls for better handling of special characters
-    match=$(ssh "${ssh_opts[@]}" "$remote_user@$remote_host" -- \
+    match=$(ssh "${SSH_OPTS[@]}" "$remote_user@$remote_host" -- \
             "find \"${remote_path}\" -maxdepth 1 -type d -name \"*${checkpoint_id}*\" | head -1" 2>/dev/null)
 
     if [[ -z "$match" ]]; then

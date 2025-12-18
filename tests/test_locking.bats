@@ -260,3 +260,4 @@ teardown() {
   # Clean up
   rm -rf "$TEST_BACKUP_DIR/.checkpoint.lock"
 }
+#fin
