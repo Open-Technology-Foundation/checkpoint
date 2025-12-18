@@ -1,24 +1,19 @@
-#\!/usr/bin/env bash
+#!/usr/bin/env bash
+# ssh_test.sh - Test SSH connectivity for remote backup feature
+#
+# Usage: ./ssh_test.sh [host] [user]
+#
+# Tests SSH key-based authentication and rsync availability on remote host.
+
 set -euo pipefail
 
-# Simple SSH connectivity test for the remote backup feature
-
-# Target host (uses okusi0 as specified in requirements)
-HOST="okusi0"
-if [[ -n "${1:-}" ]]; then
-  HOST="$1"
-fi
-
-USER="${USER:-$(whoami)}"
-if [[ -n "${2:-}" ]]; then
-  USER="$2"
-fi
+HOST="${1:-okusi0}"
+USER="${2:-${USER:-$(whoami)}}"
 
 echo "Testing SSH connectivity to $USER@$HOST..."
 
-# Try SSH with batch mode and connection timeout
 if ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "$USER@$HOST" "echo 'Connection successful'" 2>/dev/null; then
-  echo "✓ Connection successful\!"
+  echo "✓ Connection successful!"
   echo "Checking rsync availability..."
   if ssh "$USER@$HOST" "command -v rsync" >/dev/null 2>&1; then
     echo "✓ rsync is available on remote host"
@@ -41,3 +36,5 @@ else
   echo "3. Verify you can connect without a password:"
   echo "   ssh $USER@$HOST"
 fi
+
+#fin

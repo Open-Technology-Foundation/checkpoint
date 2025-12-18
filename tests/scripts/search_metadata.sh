@@ -1,4 +1,11 @@
-#\!/usr/bin/env bash
+#!/usr/bin/env bash
+# search_metadata.sh - Search checkpoints by metadata key-value pairs
+#
+# Usage: ./search_metadata.sh <backup_directory> <key> <value>
+#
+# Searches all checkpoints in a backup directory for matching metadata.
+# Useful for finding checkpoints by tag, host, user, or custom fields.
+
 set -euo pipefail
 
 backup_dir="$1"
@@ -8,27 +15,29 @@ search_value="$3"
 echo "Searching for backups with $search_key=$search_value in $backup_dir:"
 echo "-------------------------------------------------------"
 
-found=0
+declare -i found=0
+
 # Find all checkpoint directories
 while IFS= read -r dir; do
-  # Check if metadata file exists
   metadata_file="$dir/.metadata"
-  if [ \! -f "$metadata_file" ]; then
-    continue
-  fi
-  
+
+  # Skip if no metadata file
+  [[ ! -f "$metadata_file" ]] && continue
+
   # Check if metadata contains key=value
   if grep -q "^$search_key=$search_value$" "$metadata_file"; then
     cp_name=$(basename "$dir")
-    desc=$(grep "^DESCRIPTION=" "$metadata_file" 2>/dev/null  < /dev/null |  cut -d= -f2- || echo "(no description)")
+    desc=$(grep "^DESCRIPTION=" "$metadata_file" 2>/dev/null | cut -d= -f2- || echo "(no description)")
     echo "Match: $cp_name - $desc"
-    found=$((found + 1))
+    (( found++ ))
   fi
 done < <(find "$backup_dir" -maxdepth 1 -type d -name "20*" | sort -r)
 
-if [ $found -eq 0 ]; then
+if (( found == 0 )); then
   echo "No matching checkpoints found."
 else
   echo "-------------------------------------------------------"
   echo "$found checkpoint(s) matched the search criteria."
 fi
+
+#fin

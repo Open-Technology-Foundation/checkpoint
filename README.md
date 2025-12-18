@@ -45,20 +45,27 @@ wget -qO- https://raw.githubusercontent.com/Open-Technology-Foundation/checkpoin
 curl -fsSL https://raw.githubusercontent.com/Open-Technology-Foundation/checkpoint/main/install.sh | INSTALL_DIR=~/.local/bin bash
 ```
 
-The installer also creates a `chkpoint` symlink for convenience, allowing you to use either `checkpoint` or `chkpoint` commands.
+The installer also:
+- Creates a `chkpoint` symlink for convenience
+- Installs the man page (`man checkpoint`)
+- Installs bash completion for tab completion
 
 ### Manual Install
 
 ```bash
-# Download and make executable
+# Download script and make executable
 curl -fsSL https://raw.githubusercontent.com/Open-Technology-Foundation/checkpoint/main/checkpoint -o checkpoint
 chmod +x checkpoint
 sudo cp checkpoint /usr/local/bin/
 
-# Generate and install man page
-./create_manpage.sh
+# Install man page
+curl -fsSL https://raw.githubusercontent.com/Open-Technology-Foundation/checkpoint/main/checkpoint.1 -o checkpoint.1
 sudo cp checkpoint.1 /usr/local/share/man/man1/
 sudo mandb
+
+# Install bash completion
+curl -fsSL https://raw.githubusercontent.com/Open-Technology-Foundation/checkpoint/main/checkpoint.bash_completion -o checkpoint.bash_completion
+sudo cp checkpoint.bash_completion /usr/share/bash-completion/completions/checkpoint
 
 # Optional: Install hardlink for space efficiency
 sudo apt install hardlink  # Ubuntu/Debian
@@ -235,11 +242,17 @@ checkpoint --metadata --update 20250430_091429 --set "status=approved"
 
 | Option | Description |
 |--------|-------------|
-| `-d, --backup-dir DIR` | Custom backup location (default: `/var/backups/DIR_NAME`) |
+| `-d, --backup-dir DIR` | Custom backup location (default: context-dependent) |
 | `-s, --suffix SUF` | Add descriptive suffix to checkpoint name |
+| `-n, --no-hardlink` | Do not hardlink to previous backup |
+| `--hardlink` | Hardlink to previous backup (default if available) |
 | `-q, --quiet` | Minimal output (just backup path) |
 | `-v, --verbose` | Detailed output with progress (default) |
 | `-l, --list` | List existing checkpoints with sizes |
+| `-x, --exclude PATTERN` | Additional exclusion pattern (repeatable) |
+| `--debug` | Show debug information during operation |
+| `-V, --version` | Print version and exit |
+| `-h, --help` | Display help |
 
 ### Backup Management
 
@@ -247,12 +260,10 @@ checkpoint --metadata --update 20250430_091429 --set "status=approved"
 |--------|-------------|
 | `--keep N` | Keep only N most recent backups |
 | `--age DAYS` | Remove backups older than DAYS days |
-| `--exclude PATTERN` | Additional exclusion pattern (repeatable) |
+| `-p, --prune-only` | Only prune backups without creating new one |
 | `--verify` | Verify backup integrity after creation |
 | `--no-sudo` | Never attempt privilege escalation |
-| `--hardlink` | Enable hardlinking for space efficiency |
-| `--prune-only` | Remove old backups without creating new one |
-| `--no-lock` | Disable lockfile mechanism (use with caution) |
+| `--no-lock` | Disable lockfile mechanism (DANGEROUS) |
 | `--lock-timeout N` | Lock acquisition timeout in seconds (default: 300) |
 | `--force-unlock` | Force removal of stale locks |
 
@@ -260,23 +271,32 @@ checkpoint --metadata --update 20250430_091429 --set "status=approved"
 
 | Option | Description |
 |--------|-------------|
-| `--restore` | Restore from checkpoint |
-| `--from ID` | Source checkpoint (defaults to most recent) |
-| `--to DIR` | Target restore directory (defaults to original) |
+| `-r, --restore` | Restore from checkpoint |
+| `-f, --from ID` | Source checkpoint (defaults to most recent) |
+| `-t, --to DIR` | Target restore directory (defaults to original) |
 | `--dry-run` | Preview changes without making them |
-| `--diff` | Show differences before restoring |
+| `--diff` | Show differences between current files and checkpoint |
 | `--compare-with ID` | Compare two checkpoints |
 | `--detailed` | Show file content differences in comparison |
 | `--files PATTERN` | Select specific files/patterns (repeatable) |
 
-### Metadata and Remote
+### Metadata
 
 | Option | Description |
 |--------|-------------|
 | `--desc TEXT` | Add description to checkpoint |
+| `--system NAME` | Set source system name in metadata |
 | `--tag KEY=VALUE` | Add searchable metadata tag (repeatable) |
 | `--metadata` | Access checkpoint metadata |
-| `--show ID`, `--update ID`, `--find PATTERN` | Metadata operations |
+| `--show ID` | Show metadata for checkpoint ID |
+| `--update ID` | Update metadata for checkpoint ID |
+| `--find PATTERN` | Find checkpoints matching metadata pattern |
+| `--set KEY=VALUE` | Set/update metadata key-value pair |
+
+### Remote Operations
+
+| Option | Description |
+|--------|-------------|
 | `--remote SPEC` | Remote location (`user@host:/path`) |
 | `--timeout SECONDS` | SSH connection timeout (default: 30s) |
 
@@ -350,6 +370,8 @@ These patterns are automatically excluded from all backups:
 - Backup directory itself (prevents recursion)
 - `.gudang/`, `temp/`, `.temp/`, `tmp/` directories
 - Temporary files: `*~` and `~*`
+- `.tmp.*` directories (atomic operation temporaries)
+- `.checkpoint.lock/` directories (concurrency locks)
 
 ## Storage and Performance
 
@@ -392,26 +414,30 @@ This means:
 ### Testing
 
 ```bash
-# Lint code
+# Lint code (must pass without errors)
 shellcheck checkpoint
 
-# Run all tests
-bats tests/test_checkpoint.bats
+# Run all test suites with summary
+./run_all_tests.sh
 
-# Run specific test
+# Run all test suites
+bats tests/*.bats
+
+# Run individual test suites
+bats tests/test_checkpoint.bats    # Core functionality (33 tests)
+bats tests/test_locking.bats       # Concurrency protection (10 tests)
+bats tests/test_atomic.bats        # Atomic operations (9 tests)
+bats tests/test_remote.bats        # Remote operations (17 tests)
+bats tests/test_nonroot.bats       # Non-root user operations (9 tests)
+
+# Run specific test by name
 bats tests/test_checkpoint.bats -f "backup creation"
-
-# Test remote functionality
-bats tests/test_remote.bats
-
-# Test locking mechanism
-bats tests/test_locking.bats
-
-# Test atomic operations
-bats tests/test_atomic.bats
 
 # Verbose testing
 bats -v tests/test_checkpoint.bats
+
+# Enable real SSH integration tests (skipped by default)
+CHECKPOINT_TEST_SSH=1 CHECKPOINT_TEST_HOST=user@host:/path bats tests/test_remote.bats
 ```
 
 ### Contributing
@@ -419,12 +445,15 @@ bats -v tests/test_checkpoint.bats
 1. Fork the repository
 2. Create a feature branch
 3. Make changes following existing code style:
-   - 2-space indentation
+   - 2-space indentation (never tabs)
    - `set -euo pipefail` error handling
-   - Comprehensive function documentation
+   - Use `[[` for conditionals, `(( ))` for arithmetic
+   - Comprehensive function documentation headers
    - BATS tests for new functionality
-4. Run tests and linting
-5. Submit pull request
+   - End all scripts with `#fin` marker
+4. Run `shellcheck checkpoint` (must pass without errors)
+5. Run `bats tests/*.bats` (all tests must pass)
+6. Submit pull request
 
 ## Troubleshooting
 
@@ -437,6 +466,8 @@ bats -v tests/test_checkpoint.bats
 **Insufficient Disk Space**: Check available space in backup directory before large operations.
 
 **Command Not Found**: Ensure all required dependencies (`rsync`, `find`, `stat`) are installed.
+
+**Failed to Acquire Lock**: Another checkpoint process may be running. Use `--force-unlock` to remove stale locks from crashed processes, or wait for the other operation to complete.
 
 ### Debug Mode
 

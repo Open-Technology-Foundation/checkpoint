@@ -1,29 +1,46 @@
 #!/usr/bin/env bash
-# Checkpoint installation script
-# Suitable for one-liner installation:
-# curl -fsSL https://raw.githubusercontent.com/YOUR_REPO/checkpoint/main/install.sh | bash
+# install.sh - Checkpoint installer with dependency management
+#
+# One-liner installation:
+#   curl -fsSL https://raw.githubusercontent.com/Open-Technology-Foundation/checkpoint/main/install.sh | bash
+#   INSTALL_DIR=~/.local/bin bash install.sh  # Custom location
+#
+# Environment variables:
+#   INSTALL_DIR    - Installation directory (default: /usr/local/bin)
+#   MAN_DIR        - Man page directory (default: /usr/local/share/man/man1)
+#   COMPLETION_DIR - Bash completion directory (default: /usr/share/bash-completion/completions)
+#   REPO_URL       - Repository URL for downloads
+#   BRANCH         - Git branch to download from (default: main)
 
 set -euo pipefail
 
-# Configuration
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 MAN_DIR="${MAN_DIR:-/usr/local/share/man/man1}"
+COMPLETION_DIR="${COMPLETION_DIR:-/usr/share/bash-completion/completions}"
 REPO_URL="${REPO_URL:-https://github.com/Open-Technology-Foundation/checkpoint}"
 BRANCH="${BRANCH:-main}"
 
-# Colors for output
+# Terminal colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Helper functions
+# Messaging functions
 info() { echo -e "${GREEN}[INFO]${NC} $*" >&2; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 die() { error "$*"; exit 1; }
 
-# Detect OS
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+# detect_os: Identify the operating system for package manager selection
 detect_os() {
   if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     if [ -f /etc/debian_version ]; then
@@ -147,211 +164,64 @@ install_dependencies() {
   fi
 }
 
-# Download checkpoint script
+# Download checkpoint script and manpage
 download_checkpoint() {
-  local temp_dir=$(mktemp -d)
+  local temp_dir
+  temp_dir=$(mktemp -d)
   cd "$temp_dir" || die "Failed to create temporary directory"
-  
+
   info "Downloading checkpoint..."
-  
+
   # Try curl first, then wget
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL "${REPO_URL}/raw/${BRANCH}/checkpoint" -o checkpoint || \
       die "Failed to download checkpoint"
+    curl -fsSL "${REPO_URL}/raw/${BRANCH}/checkpoint.1" -o checkpoint.1 || \
+      warn "Could not download manpage (will skip manpage installation)"
+    curl -fsSL "${REPO_URL}/raw/${BRANCH}/checkpoint.bash_completion" -o checkpoint.bash_completion || \
+      warn "Could not download bash completion (will skip completion installation)"
   elif command -v wget >/dev/null 2>&1; then
     wget -q "${REPO_URL}/raw/${BRANCH}/checkpoint" -O checkpoint || \
       die "Failed to download checkpoint"
+    wget -q "${REPO_URL}/raw/${BRANCH}/checkpoint.1" -O checkpoint.1 || \
+      warn "Could not download manpage (will skip manpage installation)"
+    wget -q "${REPO_URL}/raw/${BRANCH}/checkpoint.bash_completion" -O checkpoint.bash_completion || \
+      warn "Could not download bash completion (will skip completion installation)"
   else
     die "Neither curl nor wget found. Please install one of them."
   fi
-  
+
   # Verify download
-  if [ ! -f checkpoint ] || [ ! -s checkpoint ]; then
+  if [[ ! -f checkpoint ]] || [[ ! -s checkpoint ]]; then
     die "Downloaded file is empty or missing"
   fi
-  
+
   # Make executable
   chmod +x checkpoint
-  
+
   # Only output the directory path to stdout
   echo "$temp_dir"
 }
 
-# Generate and install man page
+# Install man page from downloaded checkpoint.1
 install_manpage() {
   local checkpoint_path="$1"
-  local temp_dir=$(dirname "$checkpoint_path")
-  
-  info "Generating man page..."
-  
-  # Create man page content
-  cat > "$temp_dir/checkpoint.1" << 'EOF'
-.TH CHECKPOINT 1 "$(date +'%B %Y')" "checkpoint 1.5.0" "User Commands"
-.SH NAME
-checkpoint \- create and restore checkpoint backups
-.SH SYNOPSIS
-.B checkpoint
-[\fIOPTIONS\fR] [\fIdirectory\fR]
-.br
-.B checkpoint
-\-\-list [\fIOPTIONS\fR] [\fIdirectory\fR]
-.br
-.B checkpoint
-\-\-restore [\fIRESTORE_OPTIONS\fR] [\fIdirectory\fR]
-.SH DESCRIPTION
-Checkpoint creates timestamped backup snapshots of a directory with features including
-metadata tracking, remote operations, atomic backups, and space-efficient hardlinking.
-.PP
-Default backup location: /var/backups/DIR_NAME/TIMESTAMP[_SUFFIX]
-.PP
-Automatically excludes: backup_dir, .gudang/, temp/, .temp/, tmp/, *~, ~*
-.SH OPTIONS
-.TP
-.BR \-d ", " \-\-backup\-dir " " \fIDIR\fR
-Backup directory for checkpoints (default: /var/backups/DIR_NAME)
-.TP
-.BR \-s ", " \-\-suffix " " \fISUF\fR
-Optional suffix to add to checkpoint name
-.TP
-.BR \-n ", " \-\-no\-hardlink
-Do not hardlink to previous backup
-.TP
-.BR \-\-hardlink
-Hardlink to previous backup (default if hardlink command available)
-.TP
-.BR \-q ", " \-\-quiet
-Quiet mode, minimal output
-.TP
-.BR \-v ", " \-\-verbose
-Verbose output (default)
-.TP
-.BR \-l ", " \-\-list
-List existing checkpoints instead of creating new one
-.TP
-.BR \-x ", " \-\-exclude " " \fIPATTERN\fR
-Exclude files/directories matching pattern (can be used multiple times)
-.TP
-.BR \-\-no\-sudo
-Do not attempt to use sudo for privilege escalation
-.TP
-.BR \-\-debug
-Show debug information during operation
-.TP
-.BR \-\-verify
-Verify backup integrity after creation
-.TP
-.BR \-\-no\-lock
-Disable lockfile mechanism (dangerous - allows concurrent operations)
-.TP
-.BR \-\-lock\-timeout " " \fISECONDS\fR
-Timeout for acquiring lock (default: 300 seconds)
-.TP
-.BR \-\-force\-unlock
-Force removal of stale locks before proceeding
-.SH RESTORE OPTIONS
-.TP
-.BR \-r ", " \-\-restore
-Restore from checkpoint backup
-.TP
-.BR \-f ", " \-\-from " " \fIID\fR
-Source checkpoint to restore from (timestamp or name)
-.TP
-.BR \-t ", " \-\-to " " \fIDIR\fR
-Target directory to restore to
-.TP
-.BR \-\-dry\-run
-Show what would be restored without making changes
-.TP
-.BR \-\-diff
-Show differences between current files and checkpoint
-.TP
-.BR \-\-files " " \fIPATTERN\fR
-Specific files or patterns to restore (can be used multiple times)
-.SH METADATA OPTIONS
-.TP
-.BR \-\-metadata
-Perform metadata operations
-.TP
-.BR \-\-show " " \fIID\fR
-Show metadata for checkpoint ID
-.TP
-.BR \-\-update " " \fIID\fR
-Update metadata for checkpoint ID
-.TP
-.BR \-\-find " " \fIPATTERN\fR
-Find checkpoints matching metadata pattern
-.TP
-.BR \-\-desc " " \fITEXT\fR
-Set checkpoint description
-.TP
-.BR \-\-system " " \fINAME\fR
-Set source system name
-.TP
-.BR \-\-tag " " \fIKEY=VALUE\fR
-Add tag to checkpoint metadata (can be used multiple times)
-.SH EXAMPLES
-.PP
-Create checkpoint of current directory:
-.RS
-checkpoint
-.RE
-.PP
-Create checkpoint with description:
-.RS
-checkpoint -s "before-refactor" --desc "Stable version before API changes"
-.RE
-.PP
-List all checkpoints:
-.RS
-checkpoint --list
-.RE
-.PP
-Restore from specific checkpoint:
-.RS
-checkpoint --restore --from 20250430_091429
-.RE
-.PP
-Compare two checkpoints:
-.RS
-checkpoint --from 20250430_091429 --compare-with 20250430_101530
-.RE
-.SH ENVIRONMENT
-.TP
-.B CHECKPOINT_AUTO_CONFIRM
-If set, automatically confirm prompts without user interaction
-.SH FILES
-.TP
-.I /var/backups/*/
-Default location for checkpoint backups
-.TP
-.I .checkpoint.lock
-Lockfile to prevent concurrent operations
-.TP
-.I .metadata
-Metadata file within each checkpoint
-.SH EXIT STATUS
-.TP
-.B 0
-Success
-.TP
-.B 1
-General error
-.TP
-.B 2
-Invalid arguments
-.SH AUTHOR
-Written by the checkpoint contributors.
-.SH SEE ALSO
-.BR rsync (1),
-.BR hardlink (1)
-EOF
-  
+  local temp_dir
+  temp_dir=$(dirname "$checkpoint_path")
+  local manpage="$temp_dir/checkpoint.1"
+
+  # Check if manpage was downloaded
+  if [[ ! -f "$manpage" ]]; then
+    warn "Man page not available, skipping installation"
+    return 0
+  fi
+
   # Install man page
-  if check_root || [ -w "$MAN_DIR" ]; then
+  if check_root || [[ -w "$MAN_DIR" ]]; then
     info "Installing man page to $MAN_DIR..."
     mkdir -p "$MAN_DIR"
-    cp "$temp_dir/checkpoint.1" "$MAN_DIR/checkpoint.1"
-    
+    cp "$manpage" "$MAN_DIR/checkpoint.1"
+
     # Update man database if available
     if command -v mandb >/dev/null 2>&1; then
       mandb -q || true
@@ -360,7 +230,7 @@ EOF
     fi
   else
     warn "Cannot install man page to $MAN_DIR (no write permission)"
-    warn "To install manually: sudo cp $temp_dir/checkpoint.1 $MAN_DIR/"
+    warn "To install manually: sudo cp $manpage $MAN_DIR/"
   fi
 }
 
@@ -389,6 +259,33 @@ install_checkpoint() {
     ln -sf "$INSTALL_DIR/checkpoint" "$INSTALL_DIR/chkpoint" || true
   else
     die "Cannot install to $INSTALL_DIR. Please run with sudo or set INSTALL_DIR to a writable location"
+  fi
+}
+
+# Install bash completion from downloaded file
+install_completion() {
+  local checkpoint_path="$1"
+  local temp_dir
+  temp_dir=$(dirname "$checkpoint_path")
+  local completion="$temp_dir/checkpoint.bash_completion"
+
+  # Check if completion was downloaded
+  if [[ ! -f "$completion" ]]; then
+    warn "Bash completion not available, skipping installation"
+    return 0
+  fi
+
+  # Install completion file
+  if check_root || [[ -w "$COMPLETION_DIR" ]]; then
+    info "Installing bash completion to $COMPLETION_DIR..."
+    mkdir -p "$COMPLETION_DIR"
+    cp "$completion" "$COMPLETION_DIR/checkpoint"
+
+    # Create symlink for chkpoint alias
+    ln -sf "$COMPLETION_DIR/checkpoint" "$COMPLETION_DIR/chkpoint" 2>/dev/null || true
+  else
+    warn "Cannot install bash completion to $COMPLETION_DIR (no write permission)"
+    warn "To install manually: sudo cp $completion $COMPLETION_DIR/checkpoint"
   fi
 }
 
@@ -437,6 +334,7 @@ OPTIONS:
 ENVIRONMENT VARIABLES:
   INSTALL_DIR          Installation directory for checkpoint script
   MAN_DIR              Installation directory for man page
+  COMPLETION_DIR       Installation directory for bash completion
   REPO_URL             Git repository URL
   BRANCH               Git branch to install from
 
@@ -494,7 +392,10 @@ EOF
   
   # Install man page
   install_manpage "$checkpoint_path"
-  
+
+  # Install bash completion
+  install_completion "$checkpoint_path"
+
   # Cleanup
   rm -rf "$temp_dir"
   
@@ -510,3 +411,5 @@ EOF
 
 # Run main function
 main "$@"
+
+#fin

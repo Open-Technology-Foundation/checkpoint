@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2207  # COMPREPLY assignment is standard bash-completion pattern
+# checkpoint.bash_completion - Bash completion for checkpoint utility
+#
+# Installation:
+#   System-wide: sudo cp checkpoint.bash_completion /usr/share/bash-completion/completions/checkpoint
+#   User-only:   cp checkpoint.bash_completion ~/.local/share/bash-completion/completions/checkpoint
+#
+# Or source directly: source checkpoint.bash_completion
+#
+# Provides tab completion for all checkpoint options and dynamic
+# completion of checkpoint IDs for restore/compare operations.
+
+# _checkpoint_find_backup_dir: Locate backup directory from args or defaults
+# Searches command line for -d/--backup-dir, falls back to environment/defaults
+# Returns: backup directory path on stdout
+_checkpoint_find_backup_dir() {
+  local i dir=""
+
+  # Check command line for explicit --backup-dir or -d
+  for ((i = 1; i < ${#COMP_WORDS[@]}; i++)); do
+    case "${COMP_WORDS[i]}" in
+      --backup-dir|--backup-dir=*|-d)
+        if [[ "${COMP_WORDS[i]}" == *=* ]]; then
+          dir="${COMP_WORDS[i]#*=}"
+        elif ((i + 1 < ${#COMP_WORDS[@]})); then
+          dir="${COMP_WORDS[i+1]}"
+        fi
+        break
+        ;;
+    esac
+  done
+
+  # Fall back to environment variable
+  if [[ -z "$dir" ]]; then
+    dir="${CHECKPOINT_BACKUP_DIR:-}"
+  fi
+
+  # Fall back to default locations based on source directory
+  if [[ -z "$dir" ]]; then
+    # Try to find source directory from remaining args
+    local src_dir=""
+    for ((i = ${#COMP_WORDS[@]} - 1; i >= 1; i--)); do
+      if [[ "${COMP_WORDS[i]}" != -* ]] && [[ -d "${COMP_WORDS[i]}" ]]; then
+        src_dir="${COMP_WORDS[i]}"
+        break
+      fi
+    done
+    [[ -z "$src_dir" ]] && src_dir="$PWD"
+
+    local dir_name
+    dir_name=$(basename "$src_dir")
+
+    # Check default locations
+    if [[ -d "/var/backups/$dir_name" ]]; then
+      dir="/var/backups/$dir_name"
+    elif [[ -d "$HOME/.checkpoint/$dir_name" ]]; then
+      dir="$HOME/.checkpoint/$dir_name"
+    elif [[ -d "$src_dir/.gudang" ]]; then
+      dir="$src_dir/.gudang"
+    fi
+  fi
+
+  echo "$dir"
+}
+
+# _checkpoint_list_ids: List available checkpoint IDs for completion
+# Uses backup directory to find checkpoint directories (20* timestamp format)
+# Returns: space-separated list of checkpoint IDs
+_checkpoint_list_ids() {
+  local backup_dir
+  backup_dir=$(_checkpoint_find_backup_dir)
+
+  if [[ -n "$backup_dir" ]] && [[ -d "$backup_dir" ]]; then
+    # List directories matching timestamp pattern (with optional suffix)
+    local ids=()
+    while IFS= read -r -d '' dir; do
+      ids+=("$(basename "$dir")")
+    done < <(find "$backup_dir" -maxdepth 1 -type d -name "20*" -print0 2>/dev/null | sort -z -r)
+    echo "${ids[*]}"
+  fi
+}
+
+# _checkpoint_completion: Main completion function for checkpoint command
+_checkpoint_completion() {
+  local cur prev
+  COMPREPLY=()
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  # All long options
+  local long_opts="--backup-dir --suffix --no-hardlink --hardlink --quiet
+    --verbose --list --exclude --no-sudo --debug --verify --version --help
+    --metadata --show --update --find --desc --system --tag --set
+    --remote --timeout --keep --age --prune-only
+    --no-lock --lock-timeout --force-unlock
+    --restore --from --to --dry-run --diff --compare-with --detailed --files"
+
+  # All short options
+  local short_opts="-d -s -n -q -v -l -x -r -f -t -p -V -h"
+
+  # Context-sensitive completion based on previous word
+  case "$prev" in
+    # Directory completion
+    --backup-dir|-d|--to|-t)
+      COMPREPLY=($(compgen -d -- "$cur"))
+      return 0
+      ;;
+
+    # File/pattern completion
+    --exclude|-x|--files)
+      COMPREPLY=($(compgen -f -- "$cur"))
+      return 0
+      ;;
+
+    # Dynamic checkpoint ID completion
+    --from|-f|--show|--update|--compare-with)
+      local ids
+      ids=$(_checkpoint_list_ids)
+      if [[ -n "$ids" ]]; then
+        COMPREPLY=($(compgen -W "$ids" -- "$cur"))
+      fi
+      return 0
+      ;;
+
+    # Free text - no completion
+    --suffix|-s|--desc|--system|--find|--tag|--set|--remote)
+      return 0
+      ;;
+
+    # Numeric values - no completion
+    --timeout|--keep|--age|--lock-timeout)
+      return 0
+      ;;
+  esac
+
+  # Option completion when current word starts with -
+  if [[ "$cur" == -* ]]; then
+    COMPREPLY=($(compgen -W "$long_opts $short_opts" -- "$cur"))
+    return 0
+  fi
+
+  # Default: directory completion for source directory argument
+  COMPREPLY=($(compgen -d -- "$cur"))
+  return 0
+}
+
+# Register completion for checkpoint and chkpoint commands
+complete -F _checkpoint_completion checkpoint
+complete -F _checkpoint_completion chkpoint
+
+#fin

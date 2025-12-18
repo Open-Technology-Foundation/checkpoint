@@ -1,7 +1,17 @@
 #!/usr/bin/env bash
 #shellcheck disable=SC1091
-# Checkpoint - Utility for creating and restoring code directory snapshots
+# checkpoint - Create and restore timestamped directory snapshots
+#
+# Features: atomic backups, concurrency protection, remote SSH operations,
+#           metadata tagging, selective restore, checkpoint comparison
+#
+# Usage: checkpoint [OPTIONS] [directory]
+#        checkpoint --list [-d DIR]
+#        checkpoint --restore [--from ID] [--to DIR]
+#        checkpoint --remote user@host:/path [OPTIONS]
+#
 # Version: 1.6.0
+# License: GPL-3.0
 set -euo pipefail
 
 # Ensure consistent environment
@@ -19,9 +29,11 @@ HARDLINK=$(command -v hardlink || echo '')
 declare -r SCRIPT_PATH=$(realpath -e "$0" 2>/dev/null || echo "$0")
 declare -r SCRIPT_NAME=${SCRIPT_PATH##*/} #SCRIPT_DIR=${SCRIPT_PATH%/*}
 
-# CROSS-PLATFORM HELPER FUNCTIONS
+# =============================================================================
+# ENVIRONMENT AND MESSAGING
+# =============================================================================
 
-# Standard colours
+# Terminal colors (disabled if not a TTY)
 #shellcheck disable=SC2015
 [[ -t 2 ]] && declare -- RED=$'\033[0;31m' GREEN=$'\033[0;32m' YELLOW=$'\033[0;33m' CYAN=$'\033[0;36m' NC=$'\033[0m' || declare -- RED='' GREEN='' YELLOW='' CYAN='' NC=''
 readonly -- RED GREEN YELLOW CYAN NC
@@ -34,8 +46,7 @@ readonly -- BOLD NOCOLOR
 # Global verbosity setting
 declare -i verbose=1
 
-# Standard Messaging Functions
-# Core message function using FUNCNAME for context
+# Messaging functions: _msg (core), info, warn, error, die, vecho, success
 _msg() {
   local -- status="${FUNCNAME[1]}" prefix="$SCRIPT_NAME:" msg
   case "$status" in
@@ -56,8 +67,11 @@ info() { ((verbose)) || return 0; >&2 _msg "$@"; }
 error() { >&2 _msg "$@"; }
 die() { (($# > 1)) && error "${@:2}"; exit "${1:-0}"; }
 
-# Utility Functions
-# Display declared variables
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
+
+# decp: Debug helper - display variable declarations
 decp() { declare -p "$@" | sed 's/^declare -[a-zA-Z-]* //'; }
 
 # Trim whitespace
@@ -250,11 +264,12 @@ xcleanup() {
 }
 trap 'xcleanup $?' SIGINT SIGTERM EXIT
 
-# GLOBAL CONFIGURATION VARIABLES
-# These variables control all aspects of checkpoint operation and are set
-# through command-line argument parsing or environment detection
+# =============================================================================
+# GLOBAL CONFIGURATION
+# =============================================================================
+# All state variables, set via command-line parsing or environment detection
 
-# Core operational settings
+# Core settings
 declare -- source_dir=''    # Directory to back up (defaults to PWD)
 declare -- backup_dir=''    # Where checkpoints are stored (defaults to /var/backups/DIR_NAME)
 declare -- suffix=''        # Optional suffix for checkpoint names (sanitized alphanumeric)
@@ -545,7 +560,10 @@ get_relative_path() {
   fi
 }
 
-# LOCK MANAGEMENT FUNCTIONS
+# =============================================================================
+# LOCK MANAGEMENT
+# =============================================================================
+# Directory-based locking to prevent concurrent operations on same backup dir
 
 # acquire_lock: Create and acquire a lockfile for the given backup directory
 # Prevents concurrent operations on the same backup directory
@@ -925,7 +943,10 @@ verify_backup() {
   fi
 }
 
-# COMPARISON AND DIFF FUNCTIONS
+# =============================================================================
+# COMPARISON AND DIFF
+# =============================================================================
+# Compare checkpoints with each other or with current directory state
 
 # compare_files: Compare current files with checkpoint files and show differences
 # Uses best available diff tool (delta, colordiff, or standard diff)
@@ -1319,7 +1340,10 @@ compare_checkpoints() {
   return 0
 }
 
-# RESTORATION FUNCTIONS
+# =============================================================================
+# RESTORATION
+# =============================================================================
+# Restore files from checkpoints to target directories
 
 # restore_backup: Restore files from a checkpoint to target directory
 # Supports full or selective restoration with pattern matching
@@ -1483,7 +1507,10 @@ restore_backup() {
   return 0
 }
 
-# METADATA MANAGEMENT FUNCTIONS
+# =============================================================================
+# METADATA MANAGEMENT
+# =============================================================================
+# Create, read, update, and search checkpoint metadata (.checkpoint.meta files)
 
 # create_metadata: Create or update metadata file for a checkpoint
 # Writes description, system name, and key-value tags to .metadata file
@@ -1672,7 +1699,10 @@ find_by_metadata() {
   return 0
 }
 
-# BACKUP MANAGEMENT FUNCTIONS
+# =============================================================================
+# BACKUP MANAGEMENT
+# =============================================================================
+# Pruning old backups by count or age criteria
 
 # prune_backups: Remove old backups by count and/or age criteria
 # Implements configurable backup rotation policy
@@ -1785,10 +1815,13 @@ prune_backups() {
   return 0
 }
 
-#=============================================================================
-# Main program execution
+# =============================================================================
+# MAIN ENTRY POINT
+# =============================================================================
+# Argument parsing and operation dispatch
+
 main() {
-  # Parse command line arguments and handle operations
+  # Parse command-line arguments
   while (($#)); do case "$1" in
     -d|--backup-dir)
                   noarg "$@"; shift
@@ -2308,7 +2341,10 @@ main() {
   fi
 }
 
-# REMOTE OPERATIONS FUNCTIONS
+# =============================================================================
+# REMOTE OPERATIONS
+# =============================================================================
+# SSH-based backup/restore/list operations on remote hosts via rsync
 
 # get_ssh_opts: Get standard SSH security options array
 # Populates the global SSH_OPTS array with hardened SSH options
