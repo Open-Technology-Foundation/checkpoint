@@ -495,9 +495,16 @@ This project is licensed under the GPL-3.0 License - see the [LICENSE](LICENSE) 
 
 ## Version
 
-Current version: **1.6.0**
+Current version: **1.6.1**
 
 ### Recent Features
+
+#### v1.6.1 - Documentation and Tooling
+- **Comprehensive manpage**: Full Unix manpage with all 35+ options documented
+- **Enhanced bash completion**: Dynamic checkpoint ID completion for restore/compare operations
+- **Script documentation**: All scripts updated with headers, usage docs, and #fin markers
+- **Installer improvements**: Now installs manpage and bash completion automatically
+- **Fixed test scripts**: Corrected corrupted shebangs and BCS compliance issues
 
 #### v1.6.0 - Code Quality and Standards Compliance
 - **Full BASH-CODING-STANDARD.md compliance**: Refactored entire codebase to meet strict coding standards
