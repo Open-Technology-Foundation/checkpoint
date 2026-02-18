@@ -90,9 +90,8 @@ _checkpoint_completion() {
 
   # All long options
   local long_opts="--backup-dir --suffix --no-hardlink --hardlink --quiet
-    --verbose --list --exclude --no-sudo --debug --verify --version --help
-    --metadata --show --update --find --desc --system --tag --set
-    --remote --timeout --keep --age --prune-only
+    --verbose --list --exclude --no-sudo --version --help
+    --keep --age --prune-only
     --no-lock --lock-timeout --force-unlock
     --restore --from --to --dry-run --diff --compare-with --detailed --files"
 
@@ -114,7 +113,7 @@ _checkpoint_completion() {
       ;;
 
     # Dynamic checkpoint ID completion
-    --from|-f|--show|--update|--compare-with)
+    --from|-f|--compare-with)
       local ids
       ids=$(_checkpoint_list_ids)
       if [[ -n "$ids" ]]; then
@@ -124,12 +123,12 @@ _checkpoint_completion() {
       ;;
 
     # Free text - no completion
-    --suffix|-s|--desc|--system|--find|--tag|--set|--remote)
+    --suffix|-s)
       return 0
       ;;
 
     # Numeric values - no completion
-    --timeout|--keep|--age|--lock-timeout)
+    --keep|--age|--lock-timeout)
       return 0
       ;;
   esac

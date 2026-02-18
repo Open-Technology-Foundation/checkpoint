@@ -35,17 +35,6 @@ teardown() {
   fi
 }
 
-@test "temporary directory is used during backup creation" {
-  # Run backup with debug mode to see temp directory messages
-  run "$CHECKPOINT" -d "$TEST_BACKUP_DIR" "$TEST_SOURCE_DIR" --debug -q
-  [ "$status" -eq 0 ]
-  
-  # Check debug output mentions temporary directory
-  [[ "$output" == *"Creating temporary backup in"* ]]
-  [[ "$output" == *".tmp."* ]]
-  [[ "$output" == *"Atomic rename from"* ]]
-}
-
 @test "no temporary directories remain after successful backup" {
   # Create backup
   run "$CHECKPOINT" -d "$TEST_BACKUP_DIR" -q "$TEST_SOURCE_DIR"
@@ -133,33 +122,6 @@ EOF
   [ "$found_final" -eq 1 ]
 }
 
-@test "failed verification removes temporary backup" {
-  # Create a file that will change during backup to fail verification
-  echo "initial content" > "$TEST_SOURCE_DIR/changing.txt"
-  
-  # Create wrapper that modifies source during backup
-  cat > "$TEST_TEMP_DIR/modify_during_backup.sh" << 'EOF'
-#!/bin/bash
-# Start checkpoint with verification
-"$1" -d "$2" "$3" --verify &
-PID=$!
-
-# Wait a bit then modify source
-sleep 0.5
-echo "modified content" > "$3/changing.txt"
-
-wait $PID
-EOF
-  chmod +x "$TEST_TEMP_DIR/modify_during_backup.sh"
-  
-  # This might fail due to verification
-  run "$TEST_TEMP_DIR/modify_during_backup.sh" "$CHECKPOINT" "$TEST_BACKUP_DIR" "$TEST_SOURCE_DIR"
-  
-  # No temp directories should remain regardless of outcome
-  local tmp_dirs=$(find "$TEST_BACKUP_DIR" -maxdepth 1 -type d -name ".tmp.*" 2>/dev/null | wc -l)
-  [ "$tmp_dirs" -eq 0 ]
-}
-
 @test "concurrent backups with atomic operations don't interfere" {
   # Create two different source directories
   mkdir -p "$TEST_TEMP_DIR/source1" "$TEST_TEMP_DIR/source2"
@@ -214,28 +176,6 @@ EOF
     local backup_count=$(find "$TEST_BACKUP_DIR" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN" | wc -l)
     [ "$backup_count" -eq 2 ]
   fi
-}
-
-@test "metadata creation works with atomic operations" {
-  # Create backup with metadata
-  run "$CHECKPOINT" -d "$TEST_BACKUP_DIR" -q "$TEST_SOURCE_DIR" \
-    --desc "Test backup" --system "testsys" --tag "env=test"
-  [ "$status" -eq 0 ]
-  
-  # Get backup directory
-  local backup_dir=$(find "$TEST_BACKUP_DIR" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN" | head -n1)
-  
-  # Verify metadata file exists
-  [ -f "$backup_dir/.metadata" ]
-  
-  # Verify metadata content
-  grep -q "DESCRIPTION=Test backup" "$backup_dir/.metadata"
-  grep -q "SYSTEM=testsys" "$backup_dir/.metadata"
-  grep -q "env=test" "$backup_dir/.metadata"
-  
-  # No temp directories remain
-  local tmp_dirs=$(find "$TEST_BACKUP_DIR" -maxdepth 1 -type d -name ".tmp.*" | wc -l)
-  [ "$tmp_dirs" -eq 0 ]
 }
 
 @test "cleanup removes temp directories on exit signal" {

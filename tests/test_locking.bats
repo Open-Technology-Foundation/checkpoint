@@ -40,8 +40,8 @@ teardown() {
     echo "subdir content" > "$TEST_SOURCE_DIR/dir$i/subfile.txt"
   done
 
-  # Start a background process that creates a backup with verification (slower)
-  "$CHECKPOINT" -d "$TEST_BACKUP_DIR" --verify -q "$TEST_SOURCE_DIR" &
+  # Start a background process that creates a backup (slower due to many files)
+  "$CHECKPOINT" -d "$TEST_BACKUP_DIR" -q "$TEST_SOURCE_DIR" &
   local pid1=$!
 
   # Give it a moment to acquire the lock
@@ -141,8 +141,8 @@ teardown() {
     echo "subdir content" > "$TEST_SOURCE_DIR/dir$i/subfile.txt"
   done
 
-  # Start a long-running backup process with verification
-  "$CHECKPOINT" -d "$TEST_BACKUP_DIR" "$TEST_SOURCE_DIR" --verify &
+  # Start a long-running backup process
+  "$CHECKPOINT" -d "$TEST_BACKUP_DIR" "$TEST_SOURCE_DIR" &
   local pid=$!
 
   # Give it time to acquire lock and start processing

@@ -6,7 +6,6 @@ This directory contains test data used by the checkpoint test suite.
 
 - **test_dirs/**: Contains pre-configured directories for testing checkpoint functionality
   - **backups/**: Contains example backup snapshots
-  - **metadata/**: Contains backups with metadata for testing metadata functions
   - **restore/**: Target directory for restore operations
   - **source/**: Example source directory with files to back up
 
