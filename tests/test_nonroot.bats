@@ -107,41 +107,42 @@ is_root_or_sudo() {
 }
 
 get_default_backup_dir() {
-  local -- dir_name="$1"
+  local -- source_path="$1"
+  local -- rel_path="${source_path#/}"
 
   # Check if user specified a default via environment variable
   if [[ -n "${CHECKPOINT_BACKUP_DIR:-}" ]]; then
-    echo "${CHECKPOINT_BACKUP_DIR}/${dir_name}"
+    echo "${CHECKPOINT_BACKUP_DIR}/${rel_path}"
     return 0
   fi
 
   # If running as root or with sudo, use system location
   if is_root_or_sudo "$2"; then
-    echo "/var/backups/${dir_name}"
+    echo "/var/backups/${rel_path}"
     return 0
   fi
 
   # For non-root users, prefer home directory
-  echo "${HOME}/.checkpoint/${dir_name}"
+  echo "${HOME}/.checkpoint/${rel_path}"
   return 0
 }
 
-# Test the function
-get_default_backup_dir "testdir" "$1"
+# Test the function with full path
+get_default_backup_dir "/fake/testdir" "$1"
 EOT
   chmod +x "$TEST_TEMP_DIR/test_default.sh"
 
   # Test as non-root user
   run "$TEST_TEMP_DIR/test_default.sh" "user"
-  [[ "$output" =~ \.checkpoint/testdir$ ]]
+  [[ "$output" =~ \.checkpoint/fake/testdir$ ]]
 
   # Test as root
   run "$TEST_TEMP_DIR/test_default.sh" "root"
-  [[ "$output" == "/var/backups/testdir" ]]
+  [[ "$output" == "/var/backups/fake/testdir" ]]
 
   # Test with environment variable
   CHECKPOINT_BACKUP_DIR="/custom/path" run "$TEST_TEMP_DIR/test_default.sh" "user"
-  [[ "$output" == "/custom/path/testdir" ]]
+  [[ "$output" == "/custom/path/fake/testdir" ]]
 }
 
 @test "backup with CHECKPOINT_BACKUP_DIR environment variable" {
@@ -155,8 +156,8 @@ EOT
 
   [ "$status" -eq 0 ]
 
-  # Verify backup was created in custom location
-  custom_backup_dir="$CHECKPOINT_BACKUP_DIR/$(basename "$TEST_SOURCE_DIR")"
+  # Verify backup was created in custom location (full path, leading / stripped)
+  custom_backup_dir="$CHECKPOINT_BACKUP_DIR/${TEST_SOURCE_DIR#/}"
   [ -d "$custom_backup_dir" ]
 
   backup_count=$(find "$custom_backup_dir" -maxdepth 1 -type d -name "20*" | wc -l)

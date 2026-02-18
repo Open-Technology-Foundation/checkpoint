@@ -1,7 +1,7 @@
 .\" checkpoint.1 - manpage for checkpoint utility
-.\" Generated for checkpoint v1.6.1
+.\" Generated for checkpoint v1.7.0
 .\"
-.TH CHECKPOINT 1 "December 2025" "checkpoint 1.6.1" "User Commands"
+.TH CHECKPOINT 1 "February 2026" "checkpoint 1.7.0" "User Commands"
 .SH NAME
 checkpoint \- create and restore timestamped directory snapshots
 .SH SYNOPSIS
@@ -13,14 +13,10 @@ checkpoint \- create and restore timestamped directory snapshots
 .br
 .B checkpoint
 \fB\-\-restore\fR [\fB\-\-from\fR \fIID\fR] [\fB\-\-to\fR \fIDIR\fR]
-.br
-.B checkpoint
-\fB\-\-remote\fR \fIuser@host:path\fR [\fIOPTIONS\fR]
 .SH DESCRIPTION
 .B checkpoint
 creates timestamped snapshots of directories with support for atomic operations,
-concurrency protection, remote SSH backups, metadata tagging, selective restoration,
-and checkpoint comparison.
+concurrency protection, selective restoration, and checkpoint comparison.
 .PP
 Backups are stored in a \fI.gudang\fR directory by default, with each checkpoint
 named using a timestamp format (YYYYMMDD_HHMMSS). Optional suffixes can be added
@@ -33,10 +29,6 @@ Atomic backup operations (no partial backups on failure)
 Hardlinking for space-efficient incremental backups
 .IP \(bu 3
 Lockfile-based concurrency protection
-.IP \(bu 3
-Remote operations via SSH with rsync
-.IP \(bu 3
-Rich metadata and tagging system
 .IP \(bu 3
 Selective file restoration and comparison
 .IP \(bu 3
@@ -71,12 +63,6 @@ List existing checkpoints instead of creating a new one.
 Add an exclusion pattern. Can be specified multiple times. Patterns are passed
 to rsync's \fB\-\-exclude\fR option.
 .SS "General Options"
-.TP
-\fB\-\-debug\fR
-Enable debug output showing internal operations.
-.TP
-\fB\-\-verify\fR
-Verify backup integrity after creation by comparing checksums.
 .TP
 \fB\-\-no\-sudo\fR
 Do not attempt to use sudo for privilege escalation, even when running as root.
@@ -137,39 +123,6 @@ Show detailed output when comparing checkpoints.
 \fB\-\-files\fR \fIPATTERN\fR
 Select specific files or patterns to restore or compare. Can be specified
 multiple times.
-.SS "Metadata Options"
-.TP
-\fB\-\-metadata\fR
-Perform metadata operations (used with \fB\-\-show\fR, \fB\-\-update\fR, or \fB\-\-find\fR).
-.TP
-\fB\-\-show\fR \fIID\fR
-Display metadata for the specified checkpoint.
-.TP
-\fB\-\-update\fR \fIID\fR
-Update metadata for the specified checkpoint.
-.TP
-\fB\-\-find\fR \fIPATTERN\fR
-Search for checkpoints matching a metadata pattern. Pattern format is \fIKEY=VALUE\fR.
-.TP
-\fB\-\-desc\fR \fITEXT\fR
-Set a description for the checkpoint.
-.TP
-\fB\-\-system\fR \fINAME\fR
-Set the source system name in metadata.
-.TP
-\fB\-\-tag\fR \fIKEY=VALUE\fR
-Add a searchable metadata tag. Can be specified multiple times.
-.TP
-\fB\-\-set\fR \fIKEY=VALUE\fR
-Set or update a metadata key-value pair. Used with \fB\-\-update\fR.
-.SS "Remote Operations Options"
-.TP
-\fB\-\-remote\fR \fISPEC\fR
-Remote destination in format \fIuser@host:/path\fR. Enables SSH-based remote
-backup and restore operations.
-.TP
-\fB\-\-timeout\fR \fISECONDS\fR
-SSH connection timeout. Default is 30 seconds.
 .SH EXIT STATUS
 .TP
 .B 0
@@ -191,17 +144,17 @@ When set to any value, automatically confirm directory creation prompts.
 Useful for non-interactive environments and CI/CD pipelines.
 .SH FILES
 .TP
-.I ~/.checkpoint/
-Default backup directory for non-root users.
+.I ~/.checkpoint/FULL/SOURCE/PATH/
+Default backup directory for non-root users. The full canonical source path
+(with leading / stripped) is used as the subdirectory. For example, backing up
+\fI/home/user/myproject\fR creates backups in
+\fI~/.checkpoint/home/user/myproject/\fR.
 .TP
-.I /var/backups/
-Default backup directory for root users.
+.I /var/backups/FULL/SOURCE/PATH/
+Default backup directory for root users. Uses the same full-path convention.
 .TP
 .I BACKUP_DIR/YYYYMMDD_HHMMSS/
 Individual checkpoint directories named with timestamps.
-.TP
-.I CHECKPOINT/.metadata
-Metadata file containing description, tags, and other attributes.
 .TP
 .I BACKUP_DIR/.checkpoint.lock/
 Lock directory for concurrency protection. Contains \fIpid\fR, \fItimestamp\fR,
@@ -283,54 +236,6 @@ Compare two checkpoints:
 $ checkpoint --from 20250430_091429 --compare-with 20250430_101530 --detailed
 .fi
 .RE
-.SS "Metadata and Tagging"
-Create a checkpoint with metadata:
-.PP
-.RS
-.nf
-$ checkpoint --desc "Release v2.1.0" --tag "version=2.1.0" --tag "status=testing"
-.fi
-.RE
-.PP
-Search checkpoints by tag:
-.PP
-.RS
-.nf
-$ checkpoint --metadata --find "version=2.1.0"
-.fi
-.RE
-.PP
-Update checkpoint metadata:
-.PP
-.RS
-.nf
-$ checkpoint --metadata --update 20250430_091429 --set "status=approved"
-.fi
-.RE
-.SS "Remote Operations"
-Backup to a remote server:
-.PP
-.RS
-.nf
-$ checkpoint --remote user@server:/backups ~/project
-.fi
-.RE
-.PP
-List remote checkpoints:
-.PP
-.RS
-.nf
-$ checkpoint --remote user@server:/backups --list
-.fi
-.RE
-.PP
-Restore from remote:
-.PP
-.RS
-.nf
-$ checkpoint --remote user@server:/backups --restore --from 20250430_091429
-.fi
-.RE
 .SS "Backup Management"
 Keep only the 5 most recent checkpoints:
 .PP
@@ -371,9 +276,6 @@ This ensures no partial or corrupted backups exist.
 When the \fBhardlink\fR(1) utility is available, identical files between
 checkpoints share the same disk blocks, potentially achieving 90%+ space savings
 for incremental backups.
-.SS "SSH Security"
-Remote operations use hardened SSH options including BatchMode, StrictHostKeyChecking,
-and IdentitiesOnly for secure non-interactive operation.
 .SS "Default Exclusions"
 The following patterns are automatically excluded from all backups:
 .IP \(bu 3
@@ -388,7 +290,6 @@ The following patterns are automatically excluded from all backups:
 \fI.checkpoint.lock/\fR \- lock directories
 .SH SEE ALSO
 .BR rsync (1),
-.BR ssh (1),
 .BR hardlink (1),
 .BR bats (1)
 .SH BUGS

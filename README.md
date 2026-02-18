@@ -17,14 +17,12 @@ Checkpoint bridges the gap between informal backup practices and enterprise-grad
 
 ## Core Features
 
-- **Smart Snapshots**: Creates timestamped backups with automatic exclusions and metadata
+- **Smart Snapshots**: Creates timestamped backups with automatic exclusions
 - **Intelligent Defaults**: Automatically selects appropriate backup directories based on user privileges
 - **Atomic Operations**: Ensures backup integrity with temporary directories and atomic rename
 - **Concurrency Protection**: Lockfile mechanism prevents data corruption from parallel operations
 - **Powerful Comparison**: Visualizes differences between snapshots with color-coded output
 - **Flexible Restoration**: Supports complete or selective file recovery with preview mode
-- **Metadata Management**: Attaches searchable descriptions and tags to checkpoints
-- **Remote Operations**: Creates and restores backups on remote hosts via secure SSH
 - **Space Optimization**: Uses hardlinking between versions to minimize disk usage
 - **Backup Rotation**: Manages history by count or age for automatic cleanup
 - **Automation Support**: Non-interactive operation with timeout safeguards
@@ -83,7 +81,6 @@ brew install hardlink       # macOS
 **Optional Dependencies**:
 - `hardlink` - Space-efficient backup storage
 - `delta` or `colordiff` - Enhanced diff visualization
-- SSH client - For remote operations only
 
 ## Quick Start
 
@@ -129,10 +126,7 @@ checkpoint --restore --diff
 
 ```bash
 # Before major changes
-checkpoint -s "pre-api-refactor" --desc "Stable baseline before API changes"
-
-# Create checkpoint with metadata
-checkpoint --desc "Release candidate v2.1.0" --tag "version=2.1.0" --tag "status=testing"
+checkpoint -s "pre-api-refactor"
 
 # Compare with previous state
 checkpoint --restore --diff
@@ -170,19 +164,6 @@ checkpoint -d ~/backups/myproject
 checkpoint --exclude "node_modules/" --exclude "*.log"
 ```
 
-### Remote Operations
-
-```bash
-# Create backup on remote server
-checkpoint --remote user@host:/path/to/backups
-
-# List remote checkpoints
-checkpoint --remote user@host:/path/to/backups --list
-
-# Restore from remote checkpoint
-checkpoint --remote user@host:/path/to/backups --restore --from 20250430_091429
-```
-
 ### Backup Management
 
 ```bash
@@ -194,9 +175,6 @@ checkpoint --age 30
 
 # Prune without creating new backup
 checkpoint --prune-only --keep 3
-
-# Verify backup integrity
-checkpoint --verify
 ```
 
 ### Concurrency Protection
@@ -220,21 +198,7 @@ checkpoint --force-unlock
 The locking mechanism:
 - Prevents multiple checkpoint instances from operating on the same backup directory
 - Automatically detects and removes stale locks from crashed processes
-- Works with both local and remote operations
 - Can be disabled for special use cases (use with caution)
-
-### Metadata Operations
-
-```bash
-# Search for checkpoints
-checkpoint --metadata --find "version=2.1.0"
-
-# Show checkpoint details
-checkpoint --metadata --show 20250430_091429
-
-# Update existing checkpoint metadata
-checkpoint --metadata --update 20250430_091429 --set "status=approved"
-```
 
 ## Command Reference
 
@@ -250,7 +214,6 @@ checkpoint --metadata --update 20250430_091429 --set "status=approved"
 | `-v, --verbose` | Detailed output with progress (default) |
 | `-l, --list` | List existing checkpoints with sizes |
 | `-x, --exclude PATTERN` | Additional exclusion pattern (repeatable) |
-| `--debug` | Show debug information during operation |
 | `-V, --version` | Print version and exit |
 | `-h, --help` | Display help |
 
@@ -261,7 +224,6 @@ checkpoint --metadata --update 20250430_091429 --set "status=approved"
 | `--keep N` | Keep only N most recent backups |
 | `--age DAYS` | Remove backups older than DAYS days |
 | `-p, --prune-only` | Only prune backups without creating new one |
-| `--verify` | Verify backup integrity after creation |
 | `--no-sudo` | Never attempt privilege escalation |
 | `--no-lock` | Disable lockfile mechanism (DANGEROUS) |
 | `--lock-timeout N` | Lock acquisition timeout in seconds (default: 300) |
@@ -279,26 +241,6 @@ checkpoint --metadata --update 20250430_091429 --set "status=approved"
 | `--compare-with ID` | Compare two checkpoints |
 | `--detailed` | Show file content differences in comparison |
 | `--files PATTERN` | Select specific files/patterns (repeatable) |
-
-### Metadata
-
-| Option | Description |
-|--------|-------------|
-| `--desc TEXT` | Add description to checkpoint |
-| `--system NAME` | Set source system name in metadata |
-| `--tag KEY=VALUE` | Add searchable metadata tag (repeatable) |
-| `--metadata` | Access checkpoint metadata |
-| `--show ID` | Show metadata for checkpoint ID |
-| `--update ID` | Update metadata for checkpoint ID |
-| `--find PATTERN` | Find checkpoints matching metadata pattern |
-| `--set KEY=VALUE` | Set/update metadata key-value pair |
-
-### Remote Operations
-
-| Option | Description |
-|--------|-------------|
-| `--remote SPEC` | Remote location (`user@host:/path`) |
-| `--timeout SECONDS` | SSH connection timeout (default: 30s) |
 
 ## Automation Integration
 
@@ -345,9 +287,11 @@ Checkpoint intelligently selects backup directories based on your user context:
 
 | User Type | Default Location | Example |
 |-----------|------------------|---------|
-| Root/sudo | `/var/backups/DIR_NAME/` | `/var/backups/myproject/` |
-| Regular user | `~/.checkpoint/DIR_NAME/` | `~/.checkpoint/myproject/` |
-| Custom | `$CHECKPOINT_BACKUP_DIR/DIR_NAME/` | `~/backups/myproject/` |
+| Root/sudo | `/var/backups/FULL/PATH/` | `/var/backups/home/user/myproject/` |
+| Regular user | `~/.checkpoint/FULL/PATH/` | `~/.checkpoint/home/user/myproject/` |
+| Custom | `$CHECKPOINT_BACKUP_DIR/FULL/PATH/` | `~/backups/home/user/myproject/` |
+
+The full canonical source path (with leading `/` stripped) is used as the subdirectory, preventing collisions when backing up different directories with the same basename.
 
 ### Privilege Management
 
@@ -424,10 +368,9 @@ shellcheck checkpoint
 bats tests/*.bats
 
 # Run individual test suites
-bats tests/test_checkpoint.bats    # Core functionality (33 tests)
+bats tests/test_checkpoint.bats    # Core functionality (28 tests)
 bats tests/test_locking.bats       # Concurrency protection (10 tests)
-bats tests/test_atomic.bats        # Atomic operations (9 tests)
-bats tests/test_remote.bats        # Remote operations (17 tests)
+bats tests/test_atomic.bats        # Atomic operations (6 tests)
 bats tests/test_nonroot.bats       # Non-root user operations (9 tests)
 
 # Run specific test by name
@@ -435,9 +378,6 @@ bats tests/test_checkpoint.bats -f "backup creation"
 
 # Verbose testing
 bats -v tests/test_checkpoint.bats
-
-# Enable real SSH integration tests (skipped by default)
-CHECKPOINT_TEST_SSH=1 CHECKPOINT_TEST_HOST=user@host:/path bats tests/test_remote.bats
 ```
 
 ### Contributing
@@ -461,23 +401,15 @@ CHECKPOINT_TEST_SSH=1 CHECKPOINT_TEST_HOST=user@host:/path bats tests/test_remot
 
 **Permission Denied**: Use `--no-sudo` for user-accessible directories or ensure sudo access.
 
-**SSH Connection Failed**: Verify SSH key setup and network connectivity for remote operations.
-
 **Insufficient Disk Space**: Check available space in backup directory before large operations.
 
 **Command Not Found**: Ensure all required dependencies (`rsync`, `find`, `stat`) are installed.
 
 **Failed to Acquire Lock**: Another checkpoint process may be running. Use `--force-unlock` to remove stale locks from crashed processes, or wait for the other operation to complete.
 
-### Debug Mode
+### Comparing with Checkpoints
 
 ```bash
-# Enable debug output
-checkpoint --debug
-
-# Verify backup integrity
-checkpoint --verify
-
 # Compare with source to check differences
 checkpoint --restore --diff
 ```
@@ -485,7 +417,6 @@ checkpoint --restore --diff
 ## Security
 
 - **Input Validation**: Strict pattern matching prevents injection attacks
-- **SSH Hardening**: Secure default options for remote operations
 - **Path Protection**: Prevents directory traversal attacks
 - **Privilege Management**: Optional sudo with explicit bypass option
 
@@ -495,9 +426,14 @@ This project is licensed under the GPL-3.0 License - see the [LICENSE](LICENSE) 
 
 ## Version
 
-Current version: **1.6.1**
+Current version: **1.7.0**
 
 ### Recent Features
+
+#### v1.7.0 - Simplification
+- **Removed unused features**: Removed `--debug`, `--verify`, `--metadata`, and `--remote` options
+- **Reduced codebase**: Cut ~970 lines of unused code for easier maintenance
+- **Simplified CLI**: Fewer options, clearer purpose
 
 #### v1.6.1 - Documentation and Tooling
 - **Comprehensive manpage**: Full Unix manpage with all 35+ options documented
@@ -525,11 +461,5 @@ Current version: **1.6.1**
 - Implemented PID-based lock ownership verification
 - Added stale lock detection and automatic cleanup
 - Introduced --no-lock, --lock-timeout, and --force-unlock options
-- Extended locking to remote operations via SSH
-
-#### v1.3.0 - Enhanced Metadata and Remote Operations
-- Improved metadata management system
-- Enhanced remote operation capabilities
-- Added comprehensive remote testing framework
 
 For detailed version history, see the commit log or check `checkpoint --version`.
