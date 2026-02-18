@@ -15,7 +15,7 @@ set -euo pipefail
 shopt -s inherit_errexit shift_verbose extglob nullglob
 
 # Ensure consistent environment
-export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:"$PATH"
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 export LC_ALL=C
 
 # Core configuration
@@ -27,22 +27,20 @@ HARDLINK=$(command -v hardlink || echo '')
 # Script identification using standard pattern
 #shellcheck disable=SC2155
 declare -r SCRIPT_PATH=$(realpath -e "$0" 2>/dev/null || echo "$0")
-declare -r SCRIPT_NAME=${SCRIPT_PATH##*/} #SCRIPT_DIR=${SCRIPT_PATH%/*}
+#shellcheck disable=SC2034
+declare -r SCRIPT_DIR=${SCRIPT_PATH%/*}  # BCS0103: required metadata
+declare -r SCRIPT_NAME=${SCRIPT_PATH##*/}
 
 # =============================================================================
 # ENVIRONMENT AND MESSAGING
 # =============================================================================
 
-# Terminal colors (disabled if not a TTY)
-if [[ -t 2 ]]; then
-  declare -r RED=$'\033[0;31m' GREEN=$'\033[0;32m' YELLOW=$'\033[0;33m' CYAN=$'\033[0;36m' NC=$'\033[0m'
+# Terminal colors (disabled if neither stdout nor stderr is a TTY)
+if [[ -t 1 ]] || [[ -t 2 ]]; then
+  declare -r RED=$'\033[0;31m' GREEN=$'\033[0;32m' YELLOW=$'\033[0;33m' CYAN=$'\033[0;36m' BOLD=$'\033[1m' NC=$'\033[0m'
 else
-  declare -r RED='' GREEN='' YELLOW='' CYAN='' NC=''
+  declare -r RED='' GREEN='' YELLOW='' CYAN='' BOLD='' NC=''
 fi
-declare -- BOLD NOCOLOR
-[[ -t 1 ]] && BOLD=$'\033[1m' || BOLD=''
-[[ -t 1 ]] && NOCOLOR=$'\033[0m' || NOCOLOR=''
-readonly -- BOLD NOCOLOR
 
 # Global verbosity setting
 declare -i VERBOSE=1
@@ -162,63 +160,10 @@ get_default_backup_dir() {
   return 0
 }
 
-# Smart privilege escalation - only escalate if backup directory requires it
-# Parse arguments to determine if privilege escalation is needed
-declare -- parsed_backup_dir=''
-declare -i no_sudo_flag=0
-declare -i need_escalation=0
-
-# Quick parse to find backup directory and no-sudo flag
-for ((i=1; i<=$#; i+=1)); do
-  arg="${!i}"
-  case "$arg" in
-    -d|--backup-dir)
-      i+=1
-      if ((i <= $#)); then
-        parsed_backup_dir="${!i}"
-      fi
-      ;;
-    --no-sudo)
-      no_sudo_flag=1
-      ;;
-  esac
-done
-
-# Determine if we need privilege escalation
-if ((EUID != 0)) && ((no_sudo_flag == 0)); then
-  # We're not root and sudo is allowed
-
-  # If backup dir is specified, check if it needs privileges
-  if [[ -n "$parsed_backup_dir" ]]; then
-    if ! check_dir_access "$parsed_backup_dir"; then
-      # Directory is not accessible, need privileges
-      need_escalation=1
-    fi
-  else
-    # No backup dir specified - check the default
-    # Note: We can't determine the source dir name here without more parsing
-    # So we check if /var/backups would be accessible (the traditional default)
-    if ! check_dir_access /var/backups; then
-      # Traditional location not accessible
-      # But we might use a user directory instead, so don't escalate yet
-      need_escalation=0
-    fi
-  fi
-
-  # If we determined we need escalation, try to escalate
-  if ((need_escalation)); then
-    if sudo -ln &>/dev/null; then
-      # Sudo is available, re-run with elevated privileges
-      info 'Elevating privileges for backup directory access'
-      sudo -n "$SCRIPT_PATH" "$@"
-      exit $?
-    else
-      # Sudo not available but directory requires it
-      # Let the script continue and fail with a proper error message later
-      :
-    fi
-  fi
-fi
+# Note: Privilege escalation is handled in main() via check_dir_access.
+# Non-root users default to ~/.checkpoint/ which is always writable.
+# If a privileged backup directory is needed, the user should invoke
+# with sudo explicitly.
 
 # noarg: Verify command option has required argument
 # Validates that command-line options have proper arguments and prevents
@@ -553,6 +498,12 @@ acquire_lock() {
       return 0
     else
       # Lock exists, check if it's stale
+      if [[ ! -f "$lock_dir"/pid ]]; then
+        # No PID file — lock is incomplete/orphaned, treat as stale
+        ((VERBOSE)) && echo 'Detected orphaned lock (no PID file), removing...' ||:
+        rm -rf "$lock_dir"
+        continue
+      fi
       if [[ -f "$lock_dir"/pid ]]; then
         lock_pid=$(cat "$lock_dir"/pid 2>/dev/null || echo '0')
         lock_timestamp=$(cat "$lock_dir"/timestamp 2>/dev/null || echo '0')
@@ -730,11 +681,11 @@ compare_files() {
   fi
 
   # Display header information with enhanced formatting
-  echo "${BOLD}==============================================${NOCOLOR}"
-  echo "${BOLD}Comparing current files in:${NOCOLOR} ${CYAN}$source_dir${NOCOLOR}"
-  echo "${BOLD}With checkpoint files in:${NOCOLOR} ${CYAN}$checkpoint_dir${NOCOLOR}"
-  echo "${BOLD}Using diff tool:${NOCOLOR} ${CYAN}$diff_name${NOCOLOR}"
-  echo "${BOLD}==============================================${NOCOLOR}"
+  echo "${BOLD}==============================================${NC}"
+  echo "${BOLD}Comparing current files in:${NC} ${CYAN}$source_dir${NC}"
+  echo "${BOLD}With checkpoint files in:${NC} ${CYAN}$checkpoint_dir${NC}"
+  echo "${BOLD}Using diff tool:${NC} ${CYAN}$diff_name${NC}"
+  echo "${BOLD}==============================================${NC}"
 
   # Track statistics
   local -i identical_files=0
@@ -744,11 +695,11 @@ compare_files() {
 
   # If specific file patterns are provided, compare only those
   if [[ ${#file_patterns[@]} -gt 0 ]]; then
-    ((VERBOSE)) && echo "${BOLD}Comparing specific files/patterns${NOCOLOR}" ||:
+    ((VERBOSE)) && echo "${BOLD}Comparing specific files/patterns${NC}" ||:
 
     local -- find_pattern
     for pattern in "${file_patterns[@]}"; do
-      echo "${BOLD}Comparing pattern:${NOCOLOR} ${YELLOW}$pattern${NOCOLOR}"
+      echo "${BOLD}Comparing pattern:${NC} ${YELLOW}$pattern${NC}"
 
       # Ensure the pattern is quoted properly for find
       find_pattern="*${pattern}*"
@@ -770,17 +721,17 @@ compare_files() {
           # Both files exist, check if they're identical
           if cmp -s "$source_file" "$checkpoint_file"; then
             identical_files+=1
-            ((VERBOSE)) && echo "${GREEN}Identical file:${NOCOLOR} $rel_path"
+            ((VERBOSE)) && echo "${GREEN}Identical file:${NC} $rel_path"
           else
             different_files+=1
-            echo "${BOLD}${YELLOW}File differs:${NOCOLOR} $rel_path"
-            echo "${BOLD}---------------------------------------------------${NOCOLOR}"
+            echo "${BOLD}${YELLOW}File differs:${NC} $rel_path"
+            echo "${BOLD}---------------------------------------------------${NC}"
             "$diff_tool" "${diff_opts[@]}" "$source_file" "$checkpoint_file" || true
             echo
           fi
         else
           checkpoint_only_files+=1
-          echo "${RED}File exists only in checkpoint:${NOCOLOR} $rel_path"
+          echo "${RED}File exists only in checkpoint:${NC} $rel_path"
           echo
         fi
       done < <(find "$checkpoint_dir" -type f -path "$find_pattern" 2>/dev/null | sort || echo "")
@@ -794,14 +745,14 @@ compare_files() {
 
         if [[ ! -f "$checkpoint_file" ]]; then
           source_only_files+=1
-          echo "${GREEN}File exists only in source:${NOCOLOR} $rel_path"
+          echo "${GREEN}File exists only in source:${NC} $rel_path"
           echo
         fi
       done < <(find "$source_dir" -type f -path "$find_pattern" 2>/dev/null | sort || echo "")
     done
   else
     # Compare all files
-    ((VERBOSE)) && echo "${BOLD}Comparing all files${NOCOLOR}" ||:
+    ((VERBOSE)) && echo "${BOLD}Comparing all files${NC}" ||:
 
     # First find all files in checkpoint and compare with source
     local -i should_skip
@@ -825,17 +776,17 @@ compare_files() {
         # Both files exist, compare them
         if cmp -s "$source_file" "$checkpoint_file"; then
           identical_files+=1
-          ((VERBOSE > 1)) && echo "${GREEN}Identical file:${NOCOLOR} $rel_path" ||:
+          ((VERBOSE > 1)) && echo "${GREEN}Identical file:${NC} $rel_path" ||:
         else
           different_files+=1
-          echo "${BOLD}${YELLOW}File differs:${NOCOLOR} $rel_path"
-          echo "${BOLD}---------------------------------------------------${NOCOLOR}"
+          echo "${BOLD}${YELLOW}File differs:${NC} $rel_path"
+          echo "${BOLD}---------------------------------------------------${NC}"
           "$diff_tool" "${diff_opts[@]}" "$source_file" "$checkpoint_file" || true
           echo
         fi
       else
         checkpoint_only_files+=1
-        echo "${RED}File exists only in checkpoint:${NOCOLOR} $rel_path"
+        echo "${RED}File exists only in checkpoint:${NC} $rel_path"
         echo
       fi
     done < <(find "$checkpoint_dir" -type f 2>/dev/null | sort || echo '')
@@ -859,20 +810,20 @@ compare_files() {
 
       if [[ ! -f "$checkpoint_file" ]]; then
         source_only_files+=1
-        echo "${GREEN}File exists only in source:${NOCOLOR} $rel_path"
+        echo "${GREEN}File exists only in source:${NC} $rel_path"
         echo
       fi
     done < <(find "$source_dir" -type f 2>/dev/null | sort || echo "")
   fi
 
   # Display summary statistics
-  echo "${BOLD}==============================================${NOCOLOR}"
-  echo "${BOLD}Comparison Summary:${NOCOLOR}"
-  echo "  ${GREEN}Identical files:${NOCOLOR}        $identical_files"
-  echo "  ${YELLOW}Files with differences:${NOCOLOR}  $different_files"
-  echo "  ${GREEN}Files only in source:${NOCOLOR}    $source_only_files"
-  echo "  ${RED}Files only in checkpoint:${NOCOLOR} $checkpoint_only_files"
-  echo "${BOLD}==============================================${NOCOLOR}"
+  echo "${BOLD}==============================================${NC}"
+  echo "${BOLD}Comparison Summary:${NC}"
+  echo "  ${GREEN}Identical files:${NC}        $identical_files"
+  echo "  ${YELLOW}Files with differences:${NC}  $different_files"
+  echo "  ${GREEN}Files only in source:${NC}    $source_only_files"
+  echo "  ${RED}Files only in checkpoint:${NC} $checkpoint_only_files"
+  echo "${BOLD}==============================================${NC}"
 
   # Always return success (0) to ensure tests pass
   return 0
@@ -914,12 +865,12 @@ compare_checkpoints() {
   fi
 
   # Display header information with enhanced formatting
-  echo "${BOLD}==============================================${NOCOLOR}"
-  echo "${BOLD}Comparing checkpoints:${NOCOLOR}"
-  echo "${BOLD}First:${NOCOLOR}  ${CYAN}$(basename "$first_checkpoint")${NOCOLOR}"
-  echo "${BOLD}Second:${NOCOLOR} ${CYAN}$(basename "$second_checkpoint")${NOCOLOR}"
-  echo "${BOLD}Using diff tool:${NOCOLOR} ${CYAN}$diff_name${NOCOLOR}"
-  echo "${BOLD}==============================================${NOCOLOR}"
+  echo "${BOLD}==============================================${NC}"
+  echo "${BOLD}Comparing checkpoints:${NC}"
+  echo "${BOLD}First:${NC}  ${CYAN}$(basename "$first_checkpoint")${NC}"
+  echo "${BOLD}Second:${NC} ${CYAN}$(basename "$second_checkpoint")${NC}"
+  echo "${BOLD}Using diff tool:${NC} ${CYAN}$diff_name${NC}"
+  echo "${BOLD}==============================================${NC}"
 
   # Track statistics
   local -i identical_files=0
@@ -929,10 +880,10 @@ compare_checkpoints() {
 
   # If specific file patterns are provided, compare only those
   if [[ ${#file_patterns[@]} -gt 0 ]]; then
-    ((VERBOSE)) && echo "${BOLD}Comparing specific files/patterns${NOCOLOR}" ||:
+    ((VERBOSE)) && echo "${BOLD}Comparing specific files/patterns${NC}" ||:
 
     for pattern in "${file_patterns[@]}"; do
-      echo "${BOLD}Comparing pattern:${NOCOLOR} ${YELLOW}$pattern${NOCOLOR}"
+      echo "${BOLD}Comparing pattern:${NC} ${YELLOW}$pattern${NC}"
       # Find files matching pattern in first checkpoint
       while IFS= read -r first_file; do
         # Get relative path
@@ -944,17 +895,17 @@ compare_checkpoints() {
           # Both files exist, check if they're identical
           if cmp -s "$first_file" "$second_file"; then
             identical_files+=1
-            ((VERBOSE)) && echo "${GREEN}Identical file:${NOCOLOR} $rel_path" ||:
+            ((VERBOSE)) && echo "${GREEN}Identical file:${NC} $rel_path" ||:
           else
             different_files+=1
-            echo "${BOLD}${YELLOW}File differs:${NOCOLOR} $rel_path"
-            echo "${BOLD}---------------------------------------------------${NOCOLOR}"
+            echo "${BOLD}${YELLOW}File differs:${NC} $rel_path"
+            echo "${BOLD}---------------------------------------------------${NC}"
             "$diff_tool" "${diff_opts[@]}" "$first_file" "$second_file" || true
             echo
           fi
         else
           first_only_files+=1
-          echo "${YELLOW}File exists only in first checkpoint:${NOCOLOR} $rel_path"
+          echo "${YELLOW}File exists only in first checkpoint:${NC} $rel_path"
           echo
         fi
       done < <(find "$first_checkpoint" -type f -path "*$pattern*" | sort)
@@ -968,14 +919,14 @@ compare_checkpoints() {
 
         if [[ ! -f "$first_file" ]]; then
           second_only_files+=1
-          echo "${CYAN}File exists only in second checkpoint:${NOCOLOR} $rel_path"
+          echo "${CYAN}File exists only in second checkpoint:${NC} $rel_path"
           echo
         fi
       done < <(find "$second_checkpoint" -type f -path "*$pattern*" | sort)
     done
   else
     # Compare all files
-    ((VERBOSE)) && echo "${BOLD}Comparing all files${NOCOLOR}" ||:
+    ((VERBOSE)) && echo "${BOLD}Comparing all files${NC}" ||:
 
     # First find all files in first checkpoint and compare with second
     local -i should_skip
@@ -999,19 +950,19 @@ compare_checkpoints() {
         # Both files exist, compare them
         if cmp -s "$first_file" "$second_file"; then
           identical_files+=1
-          ((VERBOSE > 1 || detailed)) && echo "${GREEN}Identical file:${NOCOLOR} $rel_path" ||:
+          ((VERBOSE > 1 || detailed)) && echo "${GREEN}Identical file:${NC} $rel_path" ||:
         else
           different_files+=1
-          echo "${BOLD}${YELLOW}File differs:${NOCOLOR} $rel_path"
+          echo "${BOLD}${YELLOW}File differs:${NC} $rel_path"
           if ((detailed)); then
-            echo "${BOLD}---------------------------------------------------${NOCOLOR}"
+            echo "${BOLD}---------------------------------------------------${NC}"
             "$diff_tool" "${diff_opts[@]}" "$first_file" "$second_file" || true
             echo
           fi
         fi
       else
         first_only_files+=1
-        echo "${YELLOW}File exists only in first checkpoint:${NOCOLOR} $rel_path"
+        echo "${YELLOW}File exists only in first checkpoint:${NC} $rel_path"
         echo
       fi
     done < <(find "$first_checkpoint" -type f | sort)
@@ -1036,24 +987,24 @@ compare_checkpoints() {
 
       if [[ ! -f "$first_file" ]]; then
         second_only_files+=1
-        echo "${CYAN}File exists only in second checkpoint:${NOCOLOR} $rel_path"
+        echo "${CYAN}File exists only in second checkpoint:${NC} $rel_path"
         echo
       fi
     done < <(find "$second_checkpoint" -type f | sort)
   fi
 
   # Display summary statistics
-  echo "${BOLD}==============================================${NOCOLOR}"
-  echo "${BOLD}Comparison Summary:${NOCOLOR}"
-  echo "  ${GREEN}Identical files:${NOCOLOR}                $identical_files"
-  echo "  ${YELLOW}Files with differences:${NOCOLOR}          $different_files"
-  echo "  ${YELLOW}Files only in first checkpoint:${NOCOLOR}  $first_only_files"
-  echo "  ${CYAN}Files only in second checkpoint:${NOCOLOR} $second_only_files"
-  echo "${BOLD}==============================================${NOCOLOR}"
+  echo "${BOLD}==============================================${NC}"
+  echo "${BOLD}Comparison Summary:${NC}"
+  echo "  ${GREEN}Identical files:${NC}                $identical_files"
+  echo "  ${YELLOW}Files with differences:${NC}          $different_files"
+  echo "  ${YELLOW}Files only in first checkpoint:${NC}  $first_only_files"
+  echo "  ${CYAN}Files only in second checkpoint:${NC} $second_only_files"
+  echo "${BOLD}==============================================${NC}"
 
   # Print a detailed list of all different files if requested
   if ((different_files > 0 && detailed)); then
-    echo "${BOLD}List of all files with differences:${NOCOLOR}"
+    echo "${BOLD}List of all files with differences:${NC}"
     local -i should_skip
     while IFS= read -r first_file; do
       # Get relative path
@@ -1072,7 +1023,7 @@ compare_checkpoints() {
       second_file="$second_checkpoint"/"$rel_path"
 
       if [[ -f "$second_file" ]] && ! cmp -s "$first_file" "$second_file"; then
-        echo "  ${YELLOW}${rel_path}${NOCOLOR}"
+        echo "  ${YELLOW}${rel_path}${NC}"
       fi
     done < <(find "$first_checkpoint" -type f 2>/dev/null | sort || echo "")
   fi
@@ -1441,7 +1392,7 @@ main() {
                   force_unlock=1 ;;
     -V|--version) echo "$SCRIPT_NAME $VERSION"; return 0 ;;
     -h|--help)    show_help; return 0 ;;
-    -[dsnqvlrftxkphV]*) #shellcheck disable=SC2046 #split up single options
+    -[nqvlrphV]*) #shellcheck disable=SC2046 #split up single flags (no arg-taking opts)
                   set -- '' $(printf -- '-%c ' $(grep -o . <<<"${1:1}")) "${@:2}";;
     -*)           die 22 "Invalid option ${1@Q}" ;;
     *)            [[ -z "$source_dir" ]] || die 1 "Source dir '$source_dir' has already been defined!"
