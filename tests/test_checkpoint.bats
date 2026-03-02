@@ -214,7 +214,7 @@ count_backups() {
   
   # Check verbose output
   [[ "$output" =~ "Creating checkpoint backup" ]]
-  [[ "$output" =~ "Backup completed successfully" ]]
+  [[ "$output" =~ "Backup completed to" ]]
 }
 
 # Test that get_canonical_path works correctly
