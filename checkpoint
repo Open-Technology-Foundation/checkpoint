@@ -8,7 +8,7 @@
 #        checkpoint --list [-d DIR]
 #        checkpoint --restore [--from ID] [--to DIR]
 #
-# Version: 1.7.0
+# Version: 1.7.1
 # License: GPL-3.0
 set -euo pipefail
 shopt -s inherit_errexit shift_verbose extglob nullglob
@@ -18,7 +18,7 @@ declare -rx PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 declare -x LC_ALL=C
 
 # Core configuration
-declare -r VERSION=1.7.0
+declare -r VERSION=1.7.1
 declare -r TIMESTAMP_PATTERN='20[0-9][0-9][0-1][0-9][0-3][0-9]_[0-2][0-9][0-5][0-9][0-5][0-9]*'
 declare -- HARDLINK=''
 HARDLINK=$(command -v hardlink 2>/dev/null) ||:
@@ -48,43 +48,43 @@ declare -i VERBOSE=1
 # All state variables, set via command-line parsing or environment detection
 
 # Core settings
-declare -- source_dir=''    # Directory to back up (defaults to PWD)
-declare -- backup_dir=''    # Where checkpoints are stored
-declare -- suffix=''        # Optional suffix for checkpoint names
-declare -i list_mode=0      # List checkpoints instead of creating new ones
+declare -- SOURCE_DIR=''    # Directory to back up (defaults to PWD)
+declare -- BACKUP_DIR=''    # Where checkpoints are stored
+declare -- SUFFIX=''        # Optional suffix for checkpoint names
+declare -i LIST_MODE=0      # List checkpoints instead of creating new ones
 
-declare -i hardlink=0
-[[ -z "$HARDLINK" ]] || hardlink=1
+declare -i HARDLINK_MODE=0
+[[ -z "$HARDLINK" ]] || HARDLINK_MODE=1
 
-declare -a exclude_patterns=()
+declare -a EXCLUDE_PATTERNS=()
 declare -ra SKIP_PATTERNS=('/.gudang/' '/tmp/' '/.temp/' '/temp/' '*~' '~*')
 
 # Backup rotation settings
-declare -i keep_count=0     # Number of recent backups to keep (0 = keep all)
-declare -i age_days=0       # Maximum age in days for backups (0 = keep all)
-declare -i prune_only=0     # Only prune old backups without creating new backup
+declare -i KEEP_COUNT=0     # Number of recent backups to keep (0 = keep all)
+declare -i AGE_DAYS=0       # Maximum age in days for backups (0 = keep all)
+declare -i PRUNE_ONLY=0     # Only prune old backups without creating new backup
 
 # Restore operation settings
-declare -i restore_mode=0   # Enable restore mode
-declare -- restore_source='' # Source checkpoint ID to restore from
-declare -- restore_target='' # Target directory to restore to
-declare -i dry_run=0        # Preview restoration changes
-declare -i diff_mode=0      # Show differences with checkpoint
-declare -a restore_files=() # File patterns for selective restoration
+declare -i RESTORE_MODE=0   # Enable restore mode
+declare -- RESTORE_SOURCE='' # Source checkpoint ID to restore from
+declare -- RESTORE_TARGET='' # Target directory to restore to
+declare -i DRY_RUN=0        # Preview restoration changes
+declare -i DIFF_MODE=0      # Show differences with checkpoint
+declare -a RESTORE_FILES=() # File patterns for selective restoration
 
 # Comparison operation settings
-declare -i compare_mode=0   # Checkpoint-to-checkpoint comparison
-declare -- compare_source='' # Second checkpoint ID to compare with
-declare -i compare_detailed=0 # Show detailed file content differences
+declare -i COMPARE_MODE=0   # Checkpoint-to-checkpoint comparison
+declare -- COMPARE_SOURCE='' # Second checkpoint ID to compare with
+declare -i COMPARE_DETAILED=0 # Show detailed file content differences
 
 # Additional operational settings
-declare -i no_sudo=0        # Never attempt sudo privilege escalation
+declare -i NO_SUDO=0        # Never attempt sudo privilege escalation
 
 # Lock management settings
-declare -i use_locking=1    # Lockfile for concurrency protection
-declare -i lock_timeout=300 # Lock acquisition timeout (default: 5 minutes)
-declare -i force_unlock=0   # Force removal of stale locks
-declare -- lock_dir=''      # Path to current lock directory
+declare -i USE_LOCKING=1    # Lockfile for concurrency protection
+declare -i LOCK_TIMEOUT=300 # Lock acquisition timeout (default: 5 minutes)
+declare -i FORCE_UNLOCK=0   # Force removal of stale locks
+declare -- LOCK_DIR=''      # Path to current lock directory
 
 # Atomic operation settings
 declare -- TEMP_BACKUP_DIR='' # Temporary directory for atomic backup operations
@@ -102,6 +102,7 @@ _msg() {
   for msg in "$@"; do printf '%s %s\n' "$prefix" "$msg"; done
 }
 info() { ((VERBOSE)) || return 0; >&2 _msg "$@"; }
+success() { ((VERBOSE)) || return 0; >&2 _msg "$@"; }
 # Unconditional output
 warn() { >&2 _msg "$@"; }
 error() { >&2 _msg "$@"; }
@@ -343,7 +344,7 @@ isodate() { date +'%Y%m%d_%H%M%S'; }
 # Returns: Space-separated owner and group names (e.g. "user group")
 get_owner_info() {
   local -- path=$1
-  stat -c "%U %G" "$path"
+  stat -c '%U %G' "$path"
 }
 
 # get_canonical_path: Convert path to absolute/canonical form
@@ -386,7 +387,7 @@ _validate_lock_path() {
 # Prevents concurrent operations on the same backup directory
 # Args: $1 - Backup directory path
 # Returns: 0 on success, 1 on failure
-# Globals: lock_dir, lock_timeout, force_unlock, VERBOSE
+# Globals: LOCK_DIR, LOCK_TIMEOUT, FORCE_UNLOCK, VERBOSE
 acquire_lock() {
   local -- backup_dir=$1
   local -i lock_acquired=0
@@ -394,43 +395,43 @@ acquire_lock() {
   start_time=$(date +%s)
   local -i current_time=0
   local -i elapsed_time=0
-  local -- lock_pid
+  local -i lock_pid=0
   local -i lock_timestamp=0
   
   # Set lock directory path
-  lock_dir="$backup_dir"/.checkpoint.lock
+  LOCK_DIR="$backup_dir"/.checkpoint.lock
   
   while ((lock_acquired == 0)); do
     # Try to create lock directory atomically
-    if mkdir "$lock_dir" 2>/dev/null; then
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
       # Lock acquired, write our PID and timestamp
-      echo "$$" > "$lock_dir"/pid \
-        || { rm -rf "$lock_dir"; die 1 'Failed to write lock PID'; }
-      date -u +%s > "$lock_dir"/timestamp \
-        || { rm -rf "$lock_dir"; die 1 'Failed to write lock timestamp'; }
-      hostname > "$lock_dir"/hostname 2>/dev/null ||:
+      echo "$$" > "$LOCK_DIR"/pid \
+        || { rm -rf "$LOCK_DIR"; die 1 'Failed to write lock PID'; }
+      date -u +%s > "$LOCK_DIR"/timestamp \
+        || { rm -rf "$LOCK_DIR"; die 1 'Failed to write lock timestamp'; }
+      hostname > "$LOCK_DIR"/hostname 2>/dev/null ||:
       lock_acquired=1
       info "Lock acquired for backup directory ${backup_dir@Q}"
       return 0
     else
       # Lock exists, check if it's stale
-      if [[ ! -f "$lock_dir"/pid ]]; then
+      if [[ ! -f "$LOCK_DIR"/pid ]]; then
         # No PID file — lock is incomplete/orphaned, treat as stale
         info 'Detected orphaned lock (no PID file), removing...'
-        _validate_lock_path "$lock_dir"
-        rm -rf "$lock_dir"
+        _validate_lock_path "$LOCK_DIR"
+        rm -rf "$LOCK_DIR"
         continue
       fi
-      if [[ -f "$lock_dir"/pid ]]; then
-        lock_pid=$(<"$lock_dir/pid") || lock_pid=0
-        lock_timestamp=$(<"$lock_dir/timestamp") || lock_timestamp=0
+      if [[ -f "$LOCK_DIR"/pid ]]; then
+        lock_pid=$(<"$LOCK_DIR/pid") || lock_pid=0
+        lock_timestamp=$(<"$LOCK_DIR/timestamp") || lock_timestamp=0
 
         # Check if the process is still running
         if ! kill -0 "$lock_pid" 2>/dev/null; then
           # Process is dead, lock is stale
           info "Detected stale lock from PID $lock_pid, removing..."
-          _validate_lock_path "$lock_dir"
-          rm -rf "$lock_dir"
+          _validate_lock_path "$LOCK_DIR"
+          rm -rf "$LOCK_DIR"
           continue
         fi
 
@@ -438,9 +439,9 @@ acquire_lock() {
         current_time=$(date +%s)
         if (( (current_time - lock_timestamp) > 86400 )); then
           info 'Lock is older than 24 hours, considering it stale...'
-          if ((force_unlock)); then
-            _validate_lock_path "$lock_dir"
-            rm -rf "$lock_dir"
+          if ((FORCE_UNLOCK)); then
+            _validate_lock_path "$LOCK_DIR"
+            rm -rf "$LOCK_DIR"
             continue
           else
             error 'Lock exists and is older than 24 hours.'
@@ -454,8 +455,8 @@ acquire_lock() {
       current_time=$(date +%s)
       elapsed_time=$((current_time - start_time))
       
-      if ((elapsed_time >= lock_timeout)); then
-        error "Failed to acquire lock after $lock_timeout seconds"
+      if ((elapsed_time >= LOCK_TIMEOUT)); then
+        error "Failed to acquire lock after $LOCK_TIMEOUT seconds"
         error "Another checkpoint process (PID: $lock_pid) is running on this backup directory"
         error 'Use --force-unlock to forcibly remove the lock' \
               "if you're sure no other process is running"
@@ -470,17 +471,17 @@ acquire_lock() {
 
 # release_lock: Remove the lockfile for the given backup directory
 # Should be called when backup operation completes or on error
-# Args: $1 - Backup directory path (optional, uses global lock_dir if not provided)
+# Args: $1 - Backup directory path (optional, uses global LOCK_DIR if not provided)
 # Returns: 0 on success, 1 on failure
-# Globals: lock_dir, VERBOSE
+# Globals: LOCK_DIR, VERBOSE
 release_lock() {
   local -- backup_dir=${1:-}
   local -- target_lock_dir
   
   if [[ -n "$backup_dir" ]]; then
     target_lock_dir="$backup_dir"/.checkpoint.lock
-  elif [[ -n "$lock_dir" ]]; then
-    target_lock_dir="$lock_dir"
+  elif [[ -n "$LOCK_DIR" ]]; then
+    target_lock_dir="$LOCK_DIR"
   else
     # No lock to release
     return 0
@@ -518,13 +519,13 @@ release_lock() {
 # Releases any locks held and removes temporary directories
 # Args: $1 - exit code to use (default: 0)
 # Returns: Never returns (exits with specified code)
-# Globals: lock_dir, use_locking, TEMP_BACKUP_DIR
+# Globals: LOCK_DIR, USE_LOCKING, TEMP_BACKUP_DIR
 _cleanup() {
   local -i exitcode=${1:-$?}
   trap - SIGINT SIGTERM EXIT
 
   # Release lock if we're holding one
-  if ((use_locking)) && [[ -n "$lock_dir" ]]; then
+  if ((USE_LOCKING)) && [[ -n "$LOCK_DIR" ]]; then
     release_lock >/dev/null 2>&1 ||:
   fi
 
@@ -540,13 +541,13 @@ trap '_cleanup $?' SIGINT SIGTERM EXIT
 # check_disk_space: Verify sufficient disk space for backup
 # Args: $1 - Directory where backup will be stored
 # Returns: 0 if sufficient space is available, 1 if not
-# Globals: source_dir
+# Globals: SOURCE_DIR
 check_disk_space() {
   local -- dir=$1
   local -i src_size required_space available_space
   
   # Get source size in KB
-  src_size=$(du -sk "$source_dir" | cut -f1)
+  src_size=$(du -sk "$SOURCE_DIR" | cut -f1)
   
   # Add 10% buffer for safety
   required_space=$((src_size + (src_size / 10)))
@@ -798,8 +799,8 @@ compare_checkpoints() {
   {
     echo "${BOLD}==============================================${NC}"
     echo "${BOLD}Comparing checkpoints:${NC}"
-    echo "${BOLD}First:${NC}  ${CYAN}$(basename "$first_checkpoint")${NC}"
-    echo "${BOLD}Second:${NC} ${CYAN}$(basename "$second_checkpoint")${NC}"
+    echo "${BOLD}First:${NC}  ${CYAN}${first_checkpoint##*/}${NC}"
+    echo "${BOLD}Second:${NC} ${CYAN}${second_checkpoint##*/}${NC}"
     echo "${BOLD}Using diff tool:${NC} ${CYAN}$diff_name${NC}"
     echo "${BOLD}==============================================${NC}"
   }
@@ -985,12 +986,12 @@ restore_backup() {
   local -- cp_path
   cp_path=$(_resolve_checkpoint "$backup_dir" "$source_cp" "Checkpoint")
   if [[ -z "$source_cp" ]]; then
-    info "Using most recent checkpoint: $(basename "$cp_path")"
+    info "Using most recent checkpoint: ${cp_path##*/}"
   fi
 
   # If diff mode is enabled, show the differences and exit
   if ((diff_mode)); then
-    echo 'Diff mode: showing differences with checkpoint'
+    info 'Diff mode: showing differences with checkpoint'
     # The correct order of arguments is important: current files first, then checkpoint
     compare_files "$target_dir" "$cp_path" "${file_patterns[@]}"
     return 0
@@ -998,9 +999,9 @@ restore_backup() {
 
   # Warning for overwriting existing files
   local -a _entries=("$target_dir"/*)
-  if [[ -d "$target_dir" && ${#_entries[@]} -gt 0 ]] && ! ((dry_run)); then
+  if [[ -d "$target_dir" ]] && ((${#_entries[@]})) && ! ((dry_run)); then
     if ((VERBOSE)); then
-      echo "Warning: Target directory ${target_dir@Q} is not empty."
+      warn "Target directory ${target_dir@Q} is not empty."
 
       # Check if we're in a non-interactive environment or if CHECKPOINT_AUTO_CONFIRM is set
       if [[ ! -t 0 || -n "${CHECKPOINT_AUTO_CONFIRM:-}" ]]; then
@@ -1012,12 +1013,12 @@ restore_backup() {
         local -i timeout_secs=30
 
         # Inform user about timeout
-        printf 'This may overwrite existing files. Continue? [y/N] '
-        echo "(Automatically answering 'N' in $timeout_secs seconds)"
+        >&2 printf 'This may overwrite existing files. Continue? [y/N] '
+        >&2 echo "(Automatically answering 'N' in $timeout_secs seconds)"
 
         # Set up timeout reading using read with -t option
         if ! read -r -t "$timeout_secs" response; then
-          printf '\nPrompt timed out after %d seconds.\n' "$timeout_secs"
+          >&2 printf '\nPrompt timed out after %d seconds.\n' "$timeout_secs"
           die 1 'Restoration cancelled due to timeout'
         fi
 
@@ -1033,15 +1034,15 @@ restore_backup() {
     if ! ((dry_run)); then
       mkdir -p "$target_dir" || die 1 "Failed to create target directory ${target_dir@Q}"
     else
-      echo "[DRY-RUN] Would create directory ${target_dir@Q}"
+      info "[DRY-RUN] Would create directory ${target_dir@Q}"
     fi
   fi
 
   # Display restoration information
-  echo "Restoring from checkpoint: $(basename "$cp_path")"
-  echo "Target directory ${target_dir@Q}"
+  info "Restoring from checkpoint: ${cp_path##*/}"
+  info "Target directory ${target_dir@Q}"
   if ((dry_run)); then
-    echo '[DRY-RUN] No files will be modified'
+    info '[DRY-RUN] No files will be modified'
   fi
 
   # Create rsync command based on whether specific files are requested
@@ -1079,7 +1080,7 @@ restore_backup() {
         || error "Failed to set ownership on ${target_dir@Q}"
     else
       # Always print this message for non-root users, regardless of VERBOSE mode
-      echo 'Note: Running without root, original ownership not preserved'
+      warn 'Running without root, original ownership not preserved'
     fi
 
     # Report completion
@@ -1089,7 +1090,7 @@ restore_backup() {
       info "Restoration completed successfully ($file_count files)"
     fi
   else
-    echo '[DRY-RUN] Restoration simulation completed'
+    info '[DRY-RUN] Restoration simulation completed'
   fi
 
   return 0
@@ -1151,7 +1152,7 @@ prune_backups() {
       # Remove the oldest backups up to the limit
       for ((i=0; i<backups_to_remove; i+=1)); do
         if [[ -d "${old_backups[$i]}" ]]; then
-          info "Removing backup: $(basename "${old_backups[$i]}")"
+          info "Removing backup: ${old_backups[$i]##*/}"
           rm -rf "${old_backups[$i]}" || { error "Failed to remove backup ${old_backups[$i]@Q}"; return 1; }
           pruned_count+=1
         fi
@@ -1187,13 +1188,10 @@ prune_backups() {
       formatted_date="${backup_date:0:4}-${backup_date:4:2}-${backup_date:6:2}"
       formatted_date+=" ${backup_time:0:2}:${backup_time:2:2}:${backup_time:4:2}"
 
-      backup_timestamp=$(date -d "$formatted_date" +%s 2>/dev/null)
-
-      # Skip if timestamp conversion failed
-      if [[ -z "$backup_timestamp" ]]; then
+      backup_timestamp=$(date -d "$formatted_date" +%s 2>/dev/null) || {
         error "Failed to parse timestamp for backup ${backup_name@Q}"
         continue
-      fi
+      }
 
       # Check if backup is older than cutoff
       if ((backup_timestamp < cutoff_time)); then
@@ -1221,84 +1219,84 @@ main() {
   while (($#)); do case $1 in
     -d|--backup-dir)
                   noarg "$@"; shift
-                  backup_dir=$1
+                  BACKUP_DIR=$1
                   ;;
-    -s|--suffix)  noarg "$@"; shift 
+    -s|--suffix)  noarg "$@"; shift
                   # Sanitize suffix for security
-                  suffix=${1//[^[:alnum:]._-]/}
-                  [[ -z "$suffix" ]] || suffix=_"$suffix"
+                  SUFFIX=${1//[^[:alnum:]._-]/}
+                  [[ -z "$SUFFIX" ]] || SUFFIX=_"$SUFFIX"
                   ;;
     -n|--no-hardlink)
-                  hardlink=0 ;;
+                  HARDLINK_MODE=0 ;;
        --hardlink)
                   [[ -n "$HARDLINK" ]] || die 1 "'hardlink' is not installed."
-                  hardlink=1 ;;
+                  HARDLINK_MODE=1 ;;
     -q|--quiet)   VERBOSE=0 ;;
     -v|--verbose) VERBOSE=1 ;;
-    -l|--list)    list_mode=1 ;;
-    -r|--restore) restore_mode=1 ;;
+    -l|--list)    LIST_MODE=1 ;;
+    -r|--restore) RESTORE_MODE=1 ;;
     -f|--from)    noarg "$@"; shift
-                  restore_source=$1
+                  RESTORE_SOURCE=$1
                   ;;
     -t|--to)      noarg "$@"; shift
-                  restore_target=$1
+                  RESTORE_TARGET=$1
                   ;;
-       --dry-run) dry_run=1 ;;
-       --diff)    diff_mode=1 ;;
+       --dry-run) DRY_RUN=1 ;;
+       --diff)    DIFF_MODE=1 ;;
        --compare-with)
                   noarg "$@"; shift
-                  compare_source=$1
-                  compare_mode=1
+                  COMPARE_SOURCE=$1
+                  COMPARE_MODE=1
                   ;;
        --detailed)
-                  compare_detailed=1 ;;
+                  COMPARE_DETAILED=1 ;;
        --files)   noarg "$@"; shift
-                  restore_files+=("$1")
+                  RESTORE_FILES+=("$1")
                   ;;
     -x|--exclude) noarg "$@"; shift
-                  exclude_patterns+=("$1")
+                  EXCLUDE_PATTERNS+=("$1")
                   ;;
-       --no-sudo) no_sudo=1 ;;
+       --no-sudo) NO_SUDO=1 ;;
     -k|--keep)    noarg "$@"; shift
                   if ! [[ "$1" =~ ^[0-9]+$ ]]; then
                     die 22 "Invalid number for --keep option: ${1@Q}"
                   fi
-                  keep_count=$1
+                  KEEP_COUNT=$1
                   ;;
        --age)     noarg "$@"; shift
                   if ! [[ "$1" =~ ^[0-9]+$ ]]; then
                     die 22 "Invalid number for --age option: ${1@Q}"
                   fi
-                  age_days=$1
+                  AGE_DAYS=$1
                   ;;
     -p|--prune-only)
-                  prune_only=1 ;;
-       --no-lock) use_locking=0 ;;
+                  PRUNE_ONLY=1 ;;
+       --no-lock) USE_LOCKING=0 ;;
        --lock-timeout)
                   noarg "$@"; shift
                   if ! [[ "$1" =~ ^[0-9]+$ ]]; then
                     die 22 "Invalid lock timeout value: ${1@Q}"
                   fi
-                  lock_timeout=$1
+                  LOCK_TIMEOUT=$1
                   ;;
        --force-unlock)
-                  force_unlock=1 ;;
+                  FORCE_UNLOCK=1 ;;
     -V|--version) echo "$SCRIPT_NAME $VERSION"; return 0 ;;
     -h|--help)    show_help; return 0 ;;
     # Disaggregate bundled short options; arg-taking opts (-d,-s,-f,-t,-x,-k) must be last
     -[dsnqvrlftxkpVh]?*)  set -- "${1:0:2}" "-${1:2}" "${@:2}"; continue ;;
     -*)           die 22 "Invalid option ${1@Q}" ;;
-    *)            [[ -z "$source_dir" ]] || die 1 "Source dir ${source_dir@Q} has already been defined!"
-                  source_dir=$1
+    *)            [[ -z "$SOURCE_DIR" ]] || die 1 "Source dir ${SOURCE_DIR@Q} has already been defined!"
+                  SOURCE_DIR=$1
                   ;;
   esac; shift; done
 
   # Freeze parsed configuration
-  # Note: dry_run, diff_mode, keep_count, age_days are excluded because
-  # they are reused as local parameter names in subfunctions
-  readonly VERBOSE restore_mode hardlink prune_only no_sudo \
-           use_locking lock_timeout force_unlock \
-           compare_mode compare_detailed list_mode
+  # Note: DRY_RUN, DIFF_MODE, KEEP_COUNT, AGE_DAYS excluded — passed as
+  # positional args to subfunctions that may modify their own copies
+  readonly VERBOSE RESTORE_MODE HARDLINK_MODE PRUNE_ONLY NO_SUDO \
+           USE_LOCKING LOCK_TIMEOUT FORCE_UNLOCK \
+           COMPARE_MODE COMPARE_DETAILED LIST_MODE
 
   # Verify rsync present
   command -v rsync >/dev/null || die 18 'rsync required: apt install rsync'
@@ -1307,45 +1305,45 @@ main() {
   local -- datestamp
   datestamp=$(isodate)
 
-  [[ -n "$source_dir" ]] || source_dir="$PWD"
+  [[ -n "$SOURCE_DIR" ]] || SOURCE_DIR="$PWD"
   # Handle path portably using a single canonical path resolution function
-  source_dir=$(get_canonical_path "$source_dir")
-  [[ -d "$source_dir" ]] || die 1 "No such directory ${source_dir@Q}"
+  SOURCE_DIR=$(get_canonical_path "$SOURCE_DIR")
+  [[ -d "$SOURCE_DIR" ]] || die 1 "No such directory ${SOURCE_DIR@Q}"
 
   # Get owner info portably
-  read -r user group < <(get_owner_info "$source_dir")
+  read -r user group < <(get_owner_info "$SOURCE_DIR")
 
   # Use smart default backup directory based on user privileges
-  [[ -n $backup_dir ]] || backup_dir=$(get_default_backup_dir "$source_dir")
+  [[ -n $BACKUP_DIR ]] || BACKUP_DIR=$(get_default_backup_dir "$SOURCE_DIR")
   # Handle path portably using the same function
-  backup_dir=$(get_canonical_path "$backup_dir")
+  BACKUP_DIR=$(get_canonical_path "$BACKUP_DIR")
 
   # Freeze resolved path configuration
-  # Note: source_dir, backup_dir excluded — reused as local names in subfunctions
-  # Note: restore_target excluded — modified after canonicalization
-  readonly -- suffix restore_source compare_source
+  # Note: SOURCE_DIR, BACKUP_DIR excluded — modified during path resolution above
+  # Note: RESTORE_TARGET excluded — modified after canonicalization
+  readonly -- SUFFIX RESTORE_SOURCE COMPARE_SOURCE
 
   # Handle --no-sudo option by skipping privilege escalation
-  if ((no_sudo)); then
+  if ((NO_SUDO)); then
     info 'Operating in no-sudo mode, will not attempt privilege escalation'
   fi
 
   # Check if we can access the backup directory
-  if ! check_dir_access "$backup_dir"; then
+  if ! check_dir_access "$BACKUP_DIR"; then
     # Directory is not accessible with current permissions
-    if ((no_sudo)); then
-      die 1 "Cannot access backup directory ${backup_dir@Q} and --no-sudo option is set"
+    if ((NO_SUDO)); then
+      die 1 "Cannot access backup directory ${BACKUP_DIR@Q} and --no-sudo option is set"
     elif ! is_root_or_sudo; then
-      die 1 "Cannot access ${backup_dir@Q}." \
+      die 1 "Cannot access ${BACKUP_DIR@Q}." \
            'Use a directory in your home or run with sudo'
     fi
   fi
 
   # Create backup directory if it doesn't exist
-  if [[ ! -d "$backup_dir" ]]; then
+  if [[ ! -d "$BACKUP_DIR" ]]; then
     # Only prompt if in VERBOSE mode, otherwise create automatically
     if ((VERBOSE)); then
-      error "No such directory ${backup_dir@Q}"
+      error "No such directory ${BACKUP_DIR@Q}"
 
       # Check if we're in a non-interactive environment or if CHECKPOINT_AUTO_CONFIRM is set
       local -- confirm_reply=''
@@ -1358,61 +1356,61 @@ main() {
         # Interactive prompt with timeout
 
         # Inform user about timeout
-        printf 'Create backup dir %s? [y/n] ' "${backup_dir@Q}"
-        echo "(Automatically answering 'n' in $timeout_secs seconds)"
+        >&2 printf 'Create backup dir %s? [y/n] ' "${BACKUP_DIR@Q}"
+        >&2 echo "(Automatically answering 'n' in $timeout_secs seconds)"
 
         # Set up timeout reading
         if ! read -r -t "$timeout_secs" confirm_reply; then
-          printf '\nPrompt timed out after %d seconds.\n' "$timeout_secs"
+          >&2 printf '\nPrompt timed out after %d seconds.\n' "$timeout_secs"
           die 1 'Directory creation cancelled due to timeout'
         fi
       fi
 
       [[ $confirm_reply == 'y' ]] || die 1 ''
     fi
-    mkdir -p "$backup_dir" || die 1 "Could not create directory ${backup_dir@Q}"
+    mkdir -p "$BACKUP_DIR" || die 1 "Could not create directory ${BACKUP_DIR@Q}"
 
     # Only set ownership and sticky bit if we have privileges
     if is_root_or_sudo; then
-      chown "$user:$group" "$backup_dir" || error "Failed to set ownership on ${backup_dir@Q}"
-      chmod +t "$backup_dir" || error "Failed to set sticky bit on ${backup_dir@Q}"
+      chown "$user:$group" "$BACKUP_DIR" || error "Failed to set ownership on ${BACKUP_DIR@Q}"
+      chmod +t "$BACKUP_DIR" || error "Failed to set sticky bit on ${BACKUP_DIR@Q}"
     else
       info 'Running as non-root: backup directory will retain current user ownership'
     fi
   fi
 
   # Handle compare mode
-  if ((compare_mode)); then
+  if ((COMPARE_MODE)); then
     local -- first_checkpoint
-    first_checkpoint=$(_resolve_checkpoint "$backup_dir" "$restore_source" "First checkpoint")
+    first_checkpoint=$(_resolve_checkpoint "$BACKUP_DIR" "$RESTORE_SOURCE" "First checkpoint")
 
     local -- second_checkpoint
-    second_checkpoint=$(_resolve_checkpoint "$backup_dir" "$compare_source" "Second checkpoint")
+    second_checkpoint=$(_resolve_checkpoint "$BACKUP_DIR" "$COMPARE_SOURCE" "Second checkpoint")
 
     # Perform checkpoint comparison
     info 'Comparing checkpoints:'
-    info "First:  $(basename -- "$first_checkpoint")"
-    info "Second: $(basename -- "$second_checkpoint")"
+    info "First:  ${first_checkpoint##*/}"
+    info "Second: ${second_checkpoint##*/}"
 
-    compare_checkpoints "$first_checkpoint" "$second_checkpoint" "$compare_detailed" "${restore_files[@]}"
+    compare_checkpoints "$first_checkpoint" "$second_checkpoint" "$COMPARE_DETAILED" "${RESTORE_FILES[@]}"
     return 0
   fi
 
   # Handle restore mode
-  if ((restore_mode)); then
+  if ((RESTORE_MODE)); then
     # Set default target directory if not specified
-    [[ -n $restore_target ]] || restore_target="$source_dir"
-    restore_target=$(get_canonical_path "$restore_target")
+    [[ -n $RESTORE_TARGET ]] || RESTORE_TARGET="$SOURCE_DIR"
+    RESTORE_TARGET=$(get_canonical_path "$RESTORE_TARGET")
 
     # Perform restore operation
-    restore_backup "$backup_dir" "$restore_source" "$restore_target" "$dry_run" "$diff_mode" "${restore_files[@]}"
+    restore_backup "$BACKUP_DIR" "$RESTORE_SOURCE" "$RESTORE_TARGET" "$DRY_RUN" "$DIFF_MODE" "${RESTORE_FILES[@]}"
     return 0
   fi
 
   # If in list mode, list the checkpoints and exit
-  if ((list_mode)); then
-    if [[ -d "$backup_dir" ]]; then
-      echo "Checkpoints for ${source_dir@Q} in ${backup_dir@Q}:"
+  if ((LIST_MODE)); then
+    if [[ -d "$BACKUP_DIR" ]]; then
+      echo "Checkpoints for ${SOURCE_DIR@Q} in ${BACKUP_DIR@Q}:"
       echo "----------------------------------------"
 
       # Initially empty total size
@@ -1422,7 +1420,7 @@ main() {
 
       # Build sorted list of checkpoints once (avoid multiple find calls)
       local -a checkpoints=()
-      mapfile -t checkpoints < <(find "$backup_dir" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN" | sort -r)
+      mapfile -t checkpoints < <(find "$BACKUP_DIR" -maxdepth 1 -type d -name "$TIMESTAMP_PATTERN" | sort -r)
       total_entries=${#checkpoints[@]}
 
       # Find the longest name to determine column width
@@ -1472,40 +1470,40 @@ main() {
         echo "Total backups: $total_entries   Total size: $total_size"
       fi
     else
-      echo "Backup directory ${backup_dir@Q} does not exist."
+      warn "Backup directory ${BACKUP_DIR@Q} does not exist."
     fi
     return 0
   fi
 
   # Handle prune-only mode - prune backups without creating a new one
-  if ((prune_only)); then
+  if ((PRUNE_ONLY)); then
     info 'Prune-only mode: pruning backups without creating a new one.'
-    prune_backups "$backup_dir" "$keep_count" "$age_days"
+    prune_backups "$BACKUP_DIR" "$KEEP_COUNT" "$AGE_DAYS"
     return
   fi
 
   # Acquire lock for backup directory if locking is enabled
-  if ((use_locking)); then
-    if ! acquire_lock "$backup_dir"; then
-      die 1 "Failed to acquire lock for backup directory ${backup_dir@Q}"
+  if ((USE_LOCKING)); then
+    if ! acquire_lock "$BACKUP_DIR"; then
+      die 1 "Failed to acquire lock for backup directory ${BACKUP_DIR@Q}"
     fi
   fi
 
   # Check disk space
-  if ! check_disk_space "$backup_dir"; then
-    die 1 "Insufficient disk space for backup in ${backup_dir@Q}"
+  if ! check_disk_space "$BACKUP_DIR"; then
+    die 1 "Insufficient disk space for backup in ${BACKUP_DIR@Q}"
   fi
 
-  fullbackup_dir="$backup_dir"/"$datestamp""$suffix"
+  fullbackup_dir="$BACKUP_DIR"/"$datestamp""$SUFFIX"
   
   # Create temporary directory for atomic backup operation
   # Use .tmp prefix to clearly mark as temporary and exclude from listings
-  TEMP_BACKUP_DIR=$(mktemp -d "$backup_dir"/.tmp.XXXXXX) || die 1 'Failed to create temp dir'
+  TEMP_BACKUP_DIR=$(mktemp -d "$BACKUP_DIR"/.tmp.XXXXXX) || die 1 'Failed to create temp dir'
   
   # Determine the most recent backup for hardlinking (after pruning)
   local -- lastbackup
-  if ((hardlink)); then
-    lastbackup=$(find "$backup_dir" -maxdepth 1 \
+  if ((HARDLINK_MODE)); then
+    lastbackup=$(find "$BACKUP_DIR" -maxdepth 1 \
       -type d -name "$TIMESTAMP_PATTERN" | sort | tail -n1)
   fi
 
@@ -1524,7 +1522,7 @@ main() {
   fi
 
   # Get relative path from source to backup dir for proper exclusion
-  rel_exclude=$(get_relative_path "$source_dir" "$backup_dir")
+  rel_exclude=$(get_relative_path "$SOURCE_DIR" "$BACKUP_DIR")
 
   # Add progress indicator based on verbosity and terminal
   # Define rsync options as an array - ensure symlinks are preserved
@@ -1545,18 +1543,18 @@ main() {
   )
 
   # Add user-defined exclusion patterns
-  for pattern in "${exclude_patterns[@]}"; do
+  for pattern in "${EXCLUDE_PATTERNS[@]}"; do
     exclusions+=("--exclude=$pattern")
   done
 
   # Execute rsync to temporary directory with error handling
-  if ! rsync "${rsync_opts[@]}" "$source_dir"/ "$TEMP_BACKUP_DIR"/ "${exclusions[@]}"; then
+  if ! rsync "${rsync_opts[@]}" "$SOURCE_DIR"/ "$TEMP_BACKUP_DIR"/ "${exclusions[@]}"; then
     rm -rf "$TEMP_BACKUP_DIR"
     die 1 'Rsync backup failed'
   fi
 
   # hardlink - perform on temporary directory
-  if ((hardlink)) && [[ -n $lastbackup ]]; then
+  if ((HARDLINK_MODE)) && [[ -n $lastbackup ]]; then
     if [[ -n "$HARDLINK" ]]; then
       info "Hardlinking $lastbackup <-> $TEMP_BACKUP_DIR"
       "$HARDLINK" --respect-name --ignore-mode --ignore-owner --ignore-time --minimum-size 1K --quiet \
@@ -1575,30 +1573,30 @@ main() {
   TEMP_BACKUP_DIR=''
 
   # Prune old backups if requested
-  if ((keep_count > 0 || age_days > 0)); then
-    prune_backups "$backup_dir" "$keep_count" "$age_days"
+  if ((KEEP_COUNT > 0 || AGE_DAYS > 0)); then
+    prune_backups "$BACKUP_DIR" "$KEEP_COUNT" "$AGE_DAYS"
   fi
 
   # Report backup usage with improved error handling - but only if VERBOSE
   if ((VERBOSE)); then
     local -i numbackups=0
-    numbackups=$(find "$backup_dir"/ -maxdepth 1 \
+    numbackups=$(find "$BACKUP_DIR"/ -maxdepth 1 \
       -type d -name "$TIMESTAMP_PATTERN" | wc -l) || numbackups=0
 
     # Get disk usage in a portable way
     local -- usage=''
-    usage=$(du -sh "$backup_dir"/ 2>/dev/null | awk '{print $1}') || usage="unknown"
+    usage=$(du -sh "$BACKUP_DIR"/ 2>/dev/null | awk '{print $1}') || usage='unknown'
 
-    >&2 echo "$numbackups backups in ${backup_dir@Q} ($usage)"
-    echo "Backup completed to ${fullbackup_dir@Q}"
+    >&2 echo "$numbackups backups in ${BACKUP_DIR@Q} ($usage)"
+    success "Backup completed to ${fullbackup_dir@Q}"
   else
     # In quiet mode, just print the backup path
     echo "$fullbackup_dir"
   fi
   
   # Release lock after successful backup
-  if ((use_locking)); then
-    release_lock "$backup_dir"
+  if ((USE_LOCKING)); then
+    release_lock "$BACKUP_DIR"
   fi
 }
 

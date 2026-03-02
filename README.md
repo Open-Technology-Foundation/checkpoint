@@ -361,6 +361,9 @@ This means:
 # Lint code (must pass without errors)
 shellcheck checkpoint
 
+# BCS compliance check
+bcscheck checkpoint
+
 # Run all test suites with summary
 ./run_all_tests.sh
 
@@ -388,6 +391,7 @@ bats -v tests/test_checkpoint.bats
    - 2-space indentation (never tabs)
    - `set -euo pipefail` error handling
    - Use `[[` for conditionals, `(( ))` for arithmetic
+   - `UPPER_CASE` for global variables, `lowercase` for local variables
    - Comprehensive function documentation headers
    - BATS tests for new functionality
    - End all scripts with `#fin` marker
@@ -426,9 +430,17 @@ This project is licensed under the GPL-3.0 License - see the [LICENSE](LICENSE) 
 
 ## Version
 
-Current version: **1.7.0**
+Current version: **1.7.1**
 
 ### Recent Features
+
+#### v1.7.1 - BCS Compliance and Bug Fixes
+- **UPPER_CASE globals**: All 23 global configuration variables renamed to UPPER_CASE convention for clear distinction from local variables
+- **Stream separation**: Status messages now routed to stderr via messaging functions; only data output (backup paths, list output) goes to stdout
+- **New `success()` function**: Completes the messaging system (`info`, `success`, `warn`, `error`)
+- **Bug fix**: Fixed `backup_timestamp` unreachable guard in `prune_backups()` under `inherit_errexit`
+- **Performance**: Replaced 6 external `basename` calls with `${var##*/}` parameter expansion
+- **Arithmetic fix**: Replaced `-gt` in `[[ ]]` with `(( ))` for BCS0501 compliance
 
 #### v1.7.0 - Simplification
 - **Removed unused features**: Removed `--debug`, `--verify`, `--metadata`, and `--remote` options
